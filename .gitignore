@@ -1,0 +1,16 @@
+# ... 既存の設定 ...
+model/LapSRN_x4.pb
+model/LapSRN_x2.pb
+model/LapSRN_x8.pb
+logs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+
+old_implementations/
+
+
+*.safetensors

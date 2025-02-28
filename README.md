@@ -1,0 +1,11 @@
+transformers
+torch
+torchvision
+numpy
+fire
+pillow
+numpy
+einops
+sentencepiece
+protobuf
+webdataset
