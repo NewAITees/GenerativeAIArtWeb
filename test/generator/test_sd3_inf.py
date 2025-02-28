@@ -44,7 +44,8 @@ class TestSD3InferencerMock:
     @mock.patch('generator.sd3_inf.ClipG')
     @mock.patch('generator.sd3_inf.SD3')
     @mock.patch('generator.sd3_inf.VAE')
-    def test_load(self, mock_vae, mock_sd3, mock_clip_g, mock_clip_l, 
+    @mock.patch('generator.sd3_inf.safe_open')
+    def test_load(self, mock_safe_open, mock_vae, mock_sd3, mock_clip_g, mock_clip_l, 
                  mock_t5xxl, mock_tokenizer, inferencer):
         """モデルのロードが正しく行われるかテスト"""
         # モックの設定
@@ -54,6 +55,9 @@ class TestSD3InferencerMock:
         mock_clip_g.return_value = mock.MagicMock()
         mock_sd3.return_value = mock.MagicMock()
         mock_vae.return_value = mock.MagicMock()
+        
+        # safe_openの戻り値をモック
+        mock_safe_open.return_value.__enter__.return_value = mock.MagicMock()
         
         # load関数の呼び出し
         inferencer.load(
@@ -113,6 +117,58 @@ class TestSD3InferencerMock:
         # 結果の検証
         mock_randn.assert_called_once()
         assert noise.shape == latent.shape
+    
+    @mock.patch('generator.sd3_inf.torch.cat')
+    @mock.patch('generator.sd3_inf.torch.nn.functional.pad')
+    def test_get_cond(self, mock_pad, mock_cat, inferencer):
+        """条件付けが正しく生成されるかテスト"""
+        # モックの設定
+        # 無限再帰を避けるため、本物のtorch.catを使わない
+        l_out = torch.randn(1, 77, 768)
+        g_out = torch.randn(1, 77, 1280)
+        t5_out = torch.randn(1, 77, 4096)
+        l_pooled = torch.randn(1, 768)
+        g_pooled = torch.randn(1, 1280)
+        
+        # パディング後のテンソル
+        lg_out_padded = torch.randn(1, 77, 4096)
+        
+        # モックの動作を設定
+        mock_cat.side_effect = [
+            torch.randn(1, 77, 2048),  # l_out + g_out
+            torch.randn(1, 77, 6144),  # lg_out_padded + t5_out
+            torch.randn(1, 2048)       # l_pooled + g_pooled
+        ]
+        
+        mock_pad.return_value = lg_out_padded
+        
+        # 依存するメソッドをモック
+        inferencer.tokenizer = mock.MagicMock()
+        inferencer.tokenizer.tokenize_with_weights.return_value = {
+            "l": mock.MagicMock(),
+            "g": mock.MagicMock(),
+            "t5xxl": mock.MagicMock()
+        }
+        
+        inferencer.clip_l = mock.MagicMock()
+        inferencer.clip_l.model.encode_token_weights.return_value = (l_out, l_pooled)
+        
+        inferencer.clip_g = mock.MagicMock()
+        inferencer.clip_g.model.encode_token_weights.return_value = (g_out, g_pooled)
+        
+        inferencer.t5xxl = mock.MagicMock()
+        inferencer.t5xxl.model.encode_token_weights.return_value = (t5_out, torch.randn(1, 4096))
+        
+        # 関数の呼び出し
+        cond, pooled = inferencer.get_cond("test prompt")
+        
+        # 結果の検証
+        assert isinstance(cond, torch.Tensor)
+        assert isinstance(pooled, torch.Tensor)
+        
+        # モックが正しく呼ばれたことを確認
+        assert mock_cat.call_count == 3
+        assert mock_pad.call_count == 1
 
 # 実際のモデルを使用した統合テスト
 @pytest.mark.skipif(not os.path.exists(MODEL_FILE), reason="モデルファイルが存在しません")
@@ -130,7 +186,11 @@ class TestSD3InferencerIntegration:
         assert os.path.exists(MODEL_FILE), f"{MODEL_FILE}が存在しません"
         assert os.path.exists(f"{MODEL_FOLDER}/clip_g.safetensors"), "clip_g.safetensorsが存在しません"
         assert os.path.exists(f"{MODEL_FOLDER}/clip_l.safetensors"), "clip_l.safetensorsが存在しません"
-        assert os.path.exists(f"{MODEL_FOLDER}/t5xxl.safetensors"), "t5xxl.safetensorsが存在しません"
+        
+        # t5xxl_fp16.safetensors または t5xxl.safetensors のいずれかが存在するか確認
+        t5xxl_fp16_exists = os.path.exists(f"{MODEL_FOLDER}/t5xxl_fp16.safetensors")
+        t5xxl_exists = os.path.exists(f"{MODEL_FOLDER}/t5xxl.safetensors")
+        assert t5xxl_fp16_exists or t5xxl_exists, "t5xxl_fp16.safetensors または t5xxl.safetensors が存在しません"
     
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDAが利用できません")
     def test_load_actual_model(self, inferencer):

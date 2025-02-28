@@ -125,8 +125,14 @@ T5_CONFIG = {
 
 class T5XXL:
     def __init__(self, model_folder: str, device: str = "cpu", dtype=torch.float32):
+        # t5xxl_fp16.safetensors を優先して使用し、存在しない場合は t5xxl.safetensors にフォールバック
+        t5xxl_fp16_path = f"{model_folder}/t5xxl_fp16.safetensors"
+        t5xxl_path = f"{model_folder}/t5xxl.safetensors"
+        
+        model_path = t5xxl_fp16_path if os.path.exists(t5xxl_fp16_path) else t5xxl_path
+        
         with safe_open(
-            f"{model_folder}/t5xxl_fp16.safetensors", framework="pt", device="cpu"
+            model_path, framework="pt", device="cpu"
         ) as f:
             self.model = T5XXLModel(T5_CONFIG, device=device, dtype=dtype)
             load_into(f, self.model.transformer, "", device, dtype)
