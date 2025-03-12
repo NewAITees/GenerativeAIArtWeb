@@ -11,6 +11,7 @@ __pycache__/
 *.pyz
 
 old_implementations/
-
+poetry.lock
 
 *.safetensors
+*.safetensors.index.json
