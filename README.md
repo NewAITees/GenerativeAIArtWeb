@@ -12,7 +12,7 @@ Stable Diffusion 3.5モデルを利用した画像生成Webアプリケーショ
 ## プロジェクト範囲
 
 ### 1. Webインターフェース
-- Flask または Gradio を使用したWeb UIの構築
+- Gradio を使用したWeb UIの構築
 - ユーザーフレンドリーな直感的インターフェース
 - リアルタイムプレビューと設定の簡単な調整機能
 
@@ -53,7 +53,7 @@ GenerativeAIArtWeb/
 │   │   ├── mmditx.py         # MMDiTモデルコンポーネント
 │   │   └── other_impls.py    # CLIP、T5などの関連モデル
 │   ├── web/
-│   │   ├── app.py            # FlaskまたはGradioのメインアプリ
+│   │   ├── app.py            # Gradioのメインアプリ
 │   │   ├── routes.py         # ルーティング定義
 │   │   ├── templates/        # HTMLテンプレート
 │   │   └── static/           # CSS、JavaScript、その他の静的ファイル
@@ -89,7 +89,7 @@ GenerativeAIArtWeb/
 
 ## 必要条件
 
-- Python 3.10以上
+- Python 3.11以上
 - Poetry (依存関係管理)
 - CUDA対応のGPU（モデルの実行に推奨）
 
@@ -102,28 +102,35 @@ GenerativeAIArtWeb/
 - torchvision (>=0.21.0,<0.22.0)
 - numpy (>=2.2.3,<3.0.0)
 - fire (>=0.7.0,<0.8.0)
-- pillow (>=11.1.0,<12.0.0)
+- pillow (>=8.0.0,<11.0.0)
 - einops (>=0.8.1,<0.9.0)
 - sentencepiece (>=0.2.0,<0.3.0)
 - protobuf (>=5.29.3,<6.0.0)
 - webdataset (>=0.2.111,<0.3.0)
-- flask (>=3.0.0,<4.0.0) または gradio (>=4.31.0,<5.0.0)
+- gradio (>=4.31.0,<5.0.0)
+- flask (>=3.0.0,<4.0.0)
 - requests (>=2.31.0,<3.0.0)
 - pyyaml (>=6.0.1,<7.0.0)
 - opencv-python (>=4.10.0,<5.0.0)
+- python-dotenv (>=1.0.1,<2.0.0)
 
 ## インストール方法
 
-依存パッケージのインストール：
+Poetry による依存パッケージのインストール：
 
 ```bash
+# リポジトリのクローン
+git clone https://github.com/yourusername/GenerativeAIArtWeb.git
+cd GenerativeAIArtWeb
+
+# Poetryがインストールされていない場合
+curl -sSL https://install.python-poetry.org | python3 -
+
+# 依存パッケージのインストール
 poetry install
-```
 
-または：
-
-```bash
-pip install -r requirements.txt
+# オプション: CUDA サポートを有効にする場合
+poetry install -E cuda
 ```
 
 ## モデルファイルの準備
@@ -145,13 +152,7 @@ pip install -r requirements.txt
 poetry run python src/web/app.py
 ```
 
-または：
-
-```bash
-flask run --app src/web/app.py
-```
-
-Gradioを使用する場合：
+Gradioを使用する場合（デフォルト）：
 
 ```bash
 poetry run python src/web/app.py --ui gradio
