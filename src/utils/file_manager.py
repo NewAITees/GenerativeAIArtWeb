@@ -2,6 +2,11 @@
 ファイル管理機能
 
 このモジュールでは、生成された画像のカスタム保存や管理機能を提供します。
+主な機能:
+- 画像ファイルの保存と管理
+- メタデータの保存と読み込み
+- ディレクトリ構造の管理
+- ファイル名の生成と正規化
 """
 
 import os
@@ -14,21 +19,53 @@ from pathlib import Path
 from datetime import datetime
 from PIL import Image
 import numpy as np
-from typing import Optional, Dict, Any, List, Union, Tuple, Set, cast
+from typing import Optional, Dict, Any, List, Union, TypeVar, cast
 
 from src.models.file_manager import FileMetadata, FilenameConfig, FileExtension
+from src.config.file_manager_config import (
+    PROJECT_ROOT,
+    FILE_PERMISSIONS,
+    IMAGE_CONFIG,
+    DIRECTORY_STRUCTURE,
+    METADATA_CONFIG,
+    FILENAME_CONFIG,
+    ERROR_MESSAGES,
+    LOG_MESSAGES
+)
 
 # ロギング設定
 logger = logging.getLogger(__name__)
 
-# プロジェクトのルートディレクトリ
-project_root = Path(__file__).parent.parent.parent.absolute()
+# 型変数の定義
+ImageType = TypeVar('ImageType', Image.Image, np.ndarray)
 
 class FileManager:
-    """画像ファイル管理クラス"""
+    """画像ファイル管理クラス
     
-    # 画像ファイルの拡張子セット（クラス変数として定義）
-    IMAGE_EXTENSIONS: Set[str] = {".png", ".jpg", ".jpeg", ".gif", ".bmp"}
+    このクラスは、画像ファイルの保存、メタデータの管理、ディレクトリ構造の
+    管理など、ファイル関連の操作を提供します。
+    
+    Attributes:
+        output_dir (Path): 出力ディレクトリのパス
+        IMAGE_EXTENSIONS (Set[str]): サポートされる画像ファイルの拡張子
+    
+    Example:
+        ```python
+        # FileManagerのインスタンス化
+        manager = FileManager("outputs")
+        
+        # 画像の保存
+        image_path = manager.save_image(image, "test_image")
+        
+        # メタデータの保存
+        manager.save_metadata(image_path, {"prompt": "test", "steps": 30})
+        ```
+    """
+    
+    # クラス変数の定義
+    IMAGE_EXTENSIONS: set[str] = IMAGE_CONFIG['extensions']
+    DIR_PERMISSION: int = FILE_PERMISSIONS['directory']
+    FILE_PERMISSION: int = FILE_PERMISSIONS['file']
     
     def __init__(self, output_dir: Optional[str] = None):
         """初期化メソッド
@@ -41,7 +78,7 @@ class FileManager:
         if 'TEST_OUTPUT_DIR' in os.environ and not output_dir:
             self.output_dir = Path(os.environ['TEST_OUTPUT_DIR'])
         else:
-            self.output_dir = Path(output_dir) if output_dir else project_root / "outputs"
+            self.output_dir = Path(output_dir) if output_dir else PROJECT_ROOT / DIRECTORY_STRUCTURE['root']
         
         try:
             # 基本ディレクトリが存在しない場合は作成
@@ -54,14 +91,45 @@ class FileManager:
             self._initialize_directories()
             
         except PermissionError as e:
-            logger.error(f"権限エラー: {self.output_dir} へのアクセスが拒否されました: {e}")
+            logger.error(ERROR_MESSAGES['permission_denied'].format(path=self.output_dir))
             raise
         except FileNotFoundError as e:
-            logger.error(f"ディレクトリ作成エラー: {self.output_dir} を作成できません: {e}")
+            logger.error(ERROR_MESSAGES['file_not_found'].format(path=self.output_dir))
             raise
         except Exception as e:
             logger.error(f"初期化エラー: {e}")
             raise
+    
+    def _initialize_directories(self) -> None:
+        """必要なサブディレクトリを作成する"""
+        for subdir in DIRECTORY_STRUCTURE['subdirs']:
+            try:
+                path = self.output_dir / subdir
+                os.makedirs(str(path), exist_ok=True)
+                self._ensure_directory_permissions(path)
+            except Exception as e:
+                logger.error(f"サブディレクトリの初期化に失敗しました: {subdir}: {e}")
+                raise
+    
+    def _sanitize_filename(self, filename: str) -> str:
+        """ファイル名を正規化する
+        
+        Args:
+            filename (str): 正規化するファイル名
+        
+        Returns:
+            str: 正規化されたファイル名
+        """
+        # 無効な文字を置換
+        filename = re.sub(FILENAME_CONFIG['invalid_chars'], '_', filename)
+        # 空白文字を_に置換
+        filename = re.sub(r'\s+', '_', filename)
+        # 連続する_を単一の_に置換
+        filename = re.sub(r'_+', '_', filename)
+        # 先頭と末尾の_を削除
+        filename = filename.strip('_')
+        # 最大長を制限
+        return filename[:FILENAME_CONFIG['max_length']]
     
     def generate_filename(
         self, 
@@ -85,12 +153,12 @@ class FileManager:
             str: 生成されたファイル名
         """
         # プロンプトの短縮と正規化
-        short_prompt = self._sanitize_filename(prompt)[:30]
+        short_prompt = self._sanitize_filename(prompt)
         
         # 現在の日時
         now = datetime.now()
-        date_str = now.strftime("%Y%m%d") if include_date else ""
-        time_str = now.strftime("%H%M%S") if include_time else ""
+        date_str = now.strftime(FILENAME_CONFIG['date_format']) if include_date else ""
+        time_str = now.strftime(FILENAME_CONFIG['time_format']) if include_time else ""
         
         # 各部分を組み合わせてファイル名を作成
         parts = []
@@ -108,7 +176,7 @@ class FileManager:
             extension = extension[1:]
         
         # ファイル名の構築
-        return "_".join(filter(None, parts)) + f".{extension}"
+        return FILENAME_CONFIG['separator'].join(filter(None, parts)) + f".{extension}"
     
     def save_image_with_metadata(
         self, 
@@ -150,25 +218,6 @@ class FileManager:
             logger.error(f"メタデータ保存エラー: {e}")
             return image_path
     
-    def _sanitize_filename(self, filename: str) -> str:
-        """ファイル名を正規化する
-        
-        Args:
-            filename (str): 正規化するファイル名
-        
-        Returns:
-            str: 正規化されたファイル名
-        """
-        # 無効な文字を置換
-        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-        # 空白文字を_に置換
-        filename = re.sub(r'\s+', '_', filename)
-        # 連続する_を単一の_に置換
-        filename = re.sub(r'_+', '_', filename)
-        # 先頭と末尾の_を削除
-        filename = filename.strip('_')
-        return filename
-    
     def _ensure_directory_permissions(self, directory: Path) -> None:
         """ディレクトリの権限を設定する
         
@@ -181,7 +230,7 @@ class FileManager:
                 os.makedirs(str(directory), exist_ok=True)
             
             # ディレクトリの権限を設定（755 = rwxr-xr-x）
-            os.chmod(str(directory), stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+            os.chmod(str(directory), self.DIR_PERMISSION)
         except FileExistsError:
             # ディレクトリがすでに存在する場合は無視
             logger.debug(f"ディレクトリはすでに存在します: {directory}")
@@ -189,33 +238,56 @@ class FileManager:
             logger.warning(f"ディレクトリの権限設定に失敗しました: {e}")
             raise
     
-    def _initialize_directories(self) -> None:
-        """必要なサブディレクトリを作成する"""
-        subdirs = ['thumbnails', 'metadata', 'archive']
-        for subdir in subdirs:
-            try:
-                path = self.output_dir / subdir
-                os.makedirs(str(path), exist_ok=True)
-                self._ensure_directory_permissions(path)
-            except Exception as e:
-                logger.error(f"サブディレクトリの初期化に失敗しました: {subdir}: {e}")
-                raise
-    
     def _save_metadata(self, path: Path, metadata: Dict[str, Any]) -> None:
         """メタデータをJSONファイルとして保存する
         
         Args:
             path (Path): 保存先のパス
             metadata (dict): 保存するメタデータ
+        
+        Raises:
+            IOError: ファイルの書き込みに失敗した場合
+            JSONDecodeError: JSONのエンコードに失敗した場合
+            PermissionError: ファイルの権限設定に失敗した場合
         """
+        temp_path = path.with_suffix(path.suffix + '.tmp')
         try:
-            with open(str(path), 'w', encoding='utf-8') as f:
+            # 一時ファイルに書き込み
+            with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
+            
+            # 一時ファイルの権限を設定
+            os.chmod(temp_path, self.FILE_PERMISSION)
+            
+            # アトミックな移動操作
+            shutil.move(temp_path, path)
+            
+        except json.JSONEncodeError as e:
+            logger.error(f"JSONエンコードエラー: {e}")
+            self._cleanup_temp_file(temp_path)
+            raise
+        except IOError as e:
+            logger.error(f"ファイル書き込みエラー: {e}")
+            self._cleanup_temp_file(temp_path)
+            raise
         except Exception as e:
-            logger.error(f"メタデータの保存に失敗しました: {e}")
+            logger.error(f"メタデータ保存エラー: {e}")
+            self._cleanup_temp_file(temp_path)
             raise
     
-    def save_image(self, image: Any, filename_prefix: str,
+    def _cleanup_temp_file(self, path: Path) -> None:
+        """一時ファイルを削除する
+        
+        Args:
+            path (Path): 削除する一時ファイルのパス
+        """
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception as e:
+            logger.warning(f"一時ファイルの削除に失敗しました: {path}: {e}")
+    
+    def save_image(self, image: ImageType, filename_prefix: str,
                   directory: Optional[str] = None) -> Optional[str]:
         """画像を指定したディレクトリとファイル名で保存する
         
@@ -227,51 +299,71 @@ class FileManager:
         
         Returns:
             str: 保存されたファイルの絶対パス
+            None: 保存に失敗した場合
+        
+        Raises:
+            ValueError: 画像オブジェクトが無効な場合
+            IOError: ファイルの書き込みに失敗した場合
+            PermissionError: ファイルの権限設定に失敗した場合
         """
         if image is None:
             logger.warning("保存する画像がNoneです")
             return None
         
+        if not hasattr(image, 'save'):
+            logger.error(f"無効な画像オブジェクトです: {type(image)}")
+            raise ValueError(f"画像オブジェクトにsaveメソッドがありません: {type(image)}")
+        
         try:
             # 保存先ディレクトリの準備
-            save_dir = Path(self.output_dir) / directory if directory else self.output_dir
-            
-            # ディレクトリが存在しない場合は作成
-            if not save_dir.exists():
-                save_dir.mkdir(parents=True, exist_ok=True)
-                self._ensure_directory_permissions(save_dir)
+            save_dir = Path(self.output_dir) / (directory or "")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            self._ensure_directory_permissions(save_dir)
             
             # ファイル名を生成
             filename = self.generate_filename(filename_prefix)
-            
-            # ファイルパスの作成
             file_path = save_dir / filename
             
-            # ファイル名の衝突を回避（同名ファイルが存在する場合）
-            counter = 1
-            while file_path.exists():
-                name_parts = filename.rsplit(".", 1)
-                if len(name_parts) > 1:
-                    new_filename = f"{name_parts[0]}_{counter}.{name_parts[1]}"
-                else:
-                    new_filename = f"{filename}_{counter}"
-                file_path = save_dir / new_filename
-                counter += 1
+            # ファイル名の衝突を回避
+            file_path = self._get_unique_filepath(file_path)
             
             # 画像の保存
-            if hasattr(image, 'save'):
-                image.save(str(file_path))
-                # ファイルに644権限を設定
-                os.chmod(str(file_path), stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
-            else:
-                logger.warning(f"画像オブジェクトにsaveメソッドがありません: {type(image)}")
-                return None
+            image.save(str(file_path))
+            os.chmod(str(file_path), self.FILE_PERMISSION)
             
             logger.info(f"画像を保存しました: {file_path}")
             return str(file_path)
+            
+        except IOError as e:
+            logger.error(f"画像保存エラー (IO): {e}")
+            raise
+        except PermissionError as e:
+            logger.error(f"画像保存エラー (権限): {e}")
+            raise
         except Exception as e:
             logger.error(f"画像保存エラー: {e}")
-            return None
+            raise
+    
+    def _get_unique_filepath(self, file_path: Path) -> Path:
+        """重複しないファイルパスを取得する
+        
+        Args:
+            file_path (Path): 元のファイルパス
+        
+        Returns:
+            Path: 重複しない新しいファイルパス
+        """
+        if not file_path.exists():
+            return file_path
+        
+        counter = 1
+        while True:
+            stem = file_path.stem
+            suffix = file_path.suffix
+            new_path = file_path.with_name(f"{stem}_{counter}{suffix}")
+            if not new_path.exists():
+                return new_path
+            counter += 1
     
     def get_directories(self):
         """利用可能な保存ディレクトリの一覧を取得する
@@ -454,19 +546,28 @@ class FileManager:
         
         Returns:
             dict: メタデータ辞書
+            None: メタデータが存在しないまたは読み込みに失敗した場合
+        
+        Raises:
+            FileNotFoundError: メタデータファイルが存在しない場合
+            JSONDecodeError: JSONのデコードに失敗した場合
+            PermissionError: ファイルの読み込み権限がない場合
         """
+        metadata_path = Path(os.path.splitext(image_path)[0] + ".json")
+        
+        if not metadata_path.exists():
+            logger.warning(f"メタデータファイルが見つかりません: {metadata_path}")
+            return None
+        
         try:
-            # メタデータファイルのパスを生成
-            metadata_path = os.path.splitext(image_path)[0] + ".json"
-            
-            # メタデータファイルが存在しない場合はNoneを返す
-            if not os.path.exists(metadata_path):
-                logger.warning(f"メタデータファイルが見つかりません: {metadata_path}")
-                return None
-            
-            # メタデータの読み込み
-            with open(metadata_path, "r") as f:
+            with open(metadata_path, "r", encoding="utf-8") as f:
                 return json.load(f)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSONデコードエラー: {metadata_path}: {e}")
+            raise
+        except IOError as e:
+            logger.error(f"メタデータ読み込みエラー: {metadata_path}: {e}")
+            raise
         except Exception as e:
-            logger.error(f"メタデータ読み込みエラー: {e}")
-            return None 
+            logger.error(f"予期せぬエラー: {metadata_path}: {e}")
+            raise 
