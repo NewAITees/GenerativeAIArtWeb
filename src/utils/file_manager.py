@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 from PIL import Image
 import numpy as np
+from typing import Optional, Dict, Any, List, Union
 
 # ロギング設定
 logger = logging.getLogger(__name__)
@@ -19,21 +20,24 @@ logger = logging.getLogger(__name__)
 # プロジェクトのルートディレクトリ
 project_root = Path(__file__).parent.parent.parent.absolute()
 
-
 class FileManager:
     """画像ファイル管理クラス"""
     
-    def __init__(self, output_dir=None):
+    # 画像ファイルの拡張子セット（クラス変数として定義）
+    IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp"}
+    
+    def __init__(self, output_dir: Optional[str] = None):
         """初期化メソッド
         
         Args:
             output_dir (str or Path, optional): 保存の基準ディレクトリ。
                 指定がない場合はプロジェクトルートのoutputsディレクトリを使用。
         """
-        self.output_dir = Path(output_dir) if output_dir else project_root / "outputs"
+        self.output_dir = str(output_dir) if output_dir else str(project_root / "outputs")
         
         # 基本ディレクトリが存在しない場合は作成
-        self.output_dir.mkdir(exist_ok=True)
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir, exist_ok=True)
         
         # サブディレクトリの作成
         self._initialize_directories()
@@ -44,10 +48,12 @@ class FileManager:
         subdirs = ["general", "portraits", "landscapes", "abstracts"]
         
         for subdir in subdirs:
-            dir_path = self.output_dir / subdir
-            dir_path.mkdir(exist_ok=True)
+            dir_path = os.path.join(self.output_dir, subdir)
+            if not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
     
-    def save_image(self, image, filename_prefix, directory=None):
+    def save_image(self, image: Any, filename_prefix: str,
+                  directory: Optional[str] = None) -> Optional[str]:
         """画像を指定したディレクトリとファイル名で保存する
         
         Args:
@@ -63,52 +69,47 @@ class FileManager:
             logger.warning("保存する画像がNoneです")
             return None
         
-        # NumPy配列の場合はPILイメージに変換
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # 画像オブジェクトでない場合はエラー
-        if not isinstance(image, Image.Image):
-            logger.warning(f"サポートされていない画像タイプです: {type(image)}")
-            return None
-        
         try:
             # 保存先ディレクトリの準備
-            if directory:
-                save_dir = self.output_dir / directory
-            else:
-                save_dir = self.output_dir
+            save_dir = os.path.join(self.output_dir, directory) if directory else self.output_dir
             
             # ディレクトリが存在しない場合は作成
-            save_dir.mkdir(exist_ok=True)
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir, exist_ok=True)
             
             # ファイル名を生成
             filename = self.generate_filename(filename_prefix)
             
             # ファイルパスの作成
-            file_path = save_dir / filename
+            file_path = os.path.join(save_dir, filename)
             
             # ファイル名の衝突を回避（同名ファイルが存在する場合）
             counter = 1
-            while file_path.exists():
+            while os.path.exists(file_path):
                 name_parts = filename.rsplit(".", 1)
                 if len(name_parts) > 1:
                     new_filename = f"{name_parts[0]}_{counter}.{name_parts[1]}"
                 else:
                     new_filename = f"{filename}_{counter}"
-                file_path = save_dir / new_filename
+                file_path = os.path.join(save_dir, new_filename)
                 counter += 1
             
             # 画像の保存
-            image.save(file_path)
+            if hasattr(image, 'save'):
+                image.save(file_path)
+            else:
+                logger.warning(f"画像オブジェクトにsaveメソッドがありません: {type(image)}")
+                return None
             
             logger.info(f"画像を保存しました: {file_path}")
-            return str(file_path)
+            return file_path
         except Exception as e:
             logger.error(f"画像保存エラー: {e}")
             return None
     
-    def generate_filename(self, prompt, prefix="", include_date=True, include_time=True, extension="png"):
+    def generate_filename(self, prompt: str, prefix: str = "",
+                        include_date: bool = True, include_time: bool = True,
+                        extension: str = "png") -> str:
         """ファイル名を生成する
         
         Args:
@@ -122,9 +123,7 @@ class FileManager:
             str: 生成されたファイル名
         """
         # プロンプトの短縮と正規化
-        short_prompt = self._sanitize_filename(prompt)
-        if len(short_prompt) > 30:
-            short_prompt = short_prompt[:30]
+        short_prompt = self._sanitize_filename(prompt)[:30]
         
         # 現在の日時
         now = datetime.now()
@@ -147,11 +146,9 @@ class FileManager:
             extension = extension[1:]
         
         # ファイル名の構築
-        filename = "_".join(parts) + f".{extension}"
-        
-        return filename
+        return "_".join(parts) + f".{extension}"
     
-    def _sanitize_filename(self, filename):
+    def _sanitize_filename(self, filename: str) -> str:
         """ファイル名から無効な文字を除去する
         
         Args:
@@ -164,13 +161,8 @@ class FileManager:
         sanitized = re.sub(r'[\\/*?:"<>|]', "_", filename)
         # 先頭と末尾の空白や記号を削除
         sanitized = sanitized.strip(" ._-")
-        # 長すぎる場合は切り詰める
-        if len(sanitized) > 100:
-            sanitized = sanitized[:100]
         # 空文字列になった場合はデフォルト名
-        if not sanitized:
-            sanitized = "image"
-        return sanitized
+        return sanitized if sanitized else "image"
     
     def _save_metadata(self, metadata_path, metadata):
         """メタデータをJSONファイルとして保存する
@@ -196,15 +188,15 @@ class FileManager:
         """
         try:
             # 基本ディレクトリが存在しない場合は作成
-            self.output_dir.mkdir(exist_ok=True)
+            os.makedirs(self.output_dir, exist_ok=True)
             
             # サブディレクトリを取得
             dirs = [""]  # 空文字はルートディレクトリを表す
             
-            for item in self.output_dir.iterdir():
-                if item.is_dir():
+            for item in os.listdir(self.output_dir):
+                if os.path.isdir(os.path.join(self.output_dir, item)):
                     # 基本ディレクトリからの相対パス
-                    dirs.append(item.name)
+                    dirs.append(item)
             
             return sorted(dirs)
         except Exception as e:
@@ -230,8 +222,8 @@ class FileManager:
                 return False
             
             # ディレクトリの作成
-            dir_path = self.output_dir / safe_name
-            dir_path.mkdir(exist_ok=True)
+            dir_path = os.path.join(self.output_dir, safe_name)
+            os.makedirs(dir_path, exist_ok=True)
             
             logger.info(f"ディレクトリを作成しました: {dir_path}")
             return True
@@ -239,7 +231,8 @@ class FileManager:
             logger.error(f"ディレクトリ作成エラー: {e}")
             return False
     
-    def organize_by_folder(self, folder_name, filename, folder_type="prompt"):
+    def organize_by_folder(self, folder_name: str, filename: str,
+                         folder_type: str = "prompt") -> str:
         """画像を指定のフォルダに整理する
         
         Args:
@@ -250,35 +243,25 @@ class FileManager:
         Returns:
             str: 整理後のファイルパス
         """
-        # フォルダ名を正規化
-        safe_folder_name = self._sanitize_filename(folder_name)
-        
-        # フォルダタイプに基づいて保存先を決定
-        if folder_type == "prompt":
-            target_dir = self.output_dir / "by_prompt" / safe_folder_name
-        elif folder_type == "date":
-            target_dir = self.output_dir / "by_date" / safe_folder_name
-        else:  # custom
-            target_dir = self.output_dir / safe_folder_name
-        
-        # ディレクトリが存在しない場合は作成
-        target_dir.mkdir(parents=True, exist_ok=True)
-        
-        # ファイル名から絶対パスを取得
-        if os.path.isabs(filename):
-            src_path = Path(filename)
-        else:
-            src_path = self.output_dir / filename
-        
-        # ファイル名のみを取得
-        file_basename = os.path.basename(filename)
-        
-        # 移動先のパスを作成
-        dest_path = target_dir / file_basename
-        
-        return str(dest_path)
+        try:
+            # フォルダ名のサニタイズ
+            safe_folder = self._sanitize_filename(folder_name)
+            
+            # フォルダパスの作成
+            folder_path = os.path.join(self.output_dir, folder_type, safe_folder)
+            
+            # フォルダの作成
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path, exist_ok=True)
+            
+            # 新しいファイルパス
+            return os.path.join(folder_path, filename)
+        except Exception as e:
+            logger.error(f"フォルダ整理エラー: {e}")
+            return os.path.join(self.output_dir, filename)
     
-    def save_image_with_metadata(self, image, filename_prefix, metadata):
+    def save_image_with_metadata(self, image: Any, filename_prefix: str,
+                               metadata: Dict[str, Any]) -> Optional[str]:
         """画像とメタデータを保存する
         
         Args:
@@ -287,149 +270,141 @@ class FileManager:
             metadata (dict): 保存するメタデータ
         
         Returns:
-            str: 保存されたファイルの絶対パス
+            str: 保存された画像ファイルのパス
         """
-        # 画像を保存
+        # 画像の保存
         image_path = self.save_image(image, filename_prefix)
         if not image_path:
             return None
         
-        # メタデータを保存
-        metadata_path = Path(image_path).with_suffix('.json')
         try:
-            # タイムスタンプを追加
-            metadata_with_timestamp = metadata.copy()
-            metadata_with_timestamp['saved_at'] = datetime.now().isoformat()
+            # メタデータファイルのパスを生成
+            metadata_path = os.path.splitext(image_path)[0] + ".json"
             
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump(metadata_with_timestamp, f, ensure_ascii=False, indent=2)
-                
+            # メタデータの保存
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+            
             logger.info(f"メタデータを保存しました: {metadata_path}")
             return image_path
         except Exception as e:
             logger.error(f"メタデータ保存エラー: {e}")
-            return image_path  # 画像は保存できたのでそのパスを返す
+            return image_path
     
-    def list_generated_images(self, directory=None):
-        """生成された画像のリストを取得する
+    def list_generated_images(self, directory: Optional[str] = None) -> List[str]:
+        """生成された画像ファイルの一覧を取得する
         
         Args:
-            directory (str, optional): 検索対象のディレクトリ。指定がなければ基本ディレクトリを検索。
+            directory (str, optional): 検索対象のディレクトリ
         
         Returns:
             list: 画像ファイル名のリスト
         """
-        if directory:
-            search_dir = self.output_dir / directory
-        else:
-            search_dir = self.output_dir
+        try:
+            # 検索対象ディレクトリの設定
+            target_dir = os.path.join(self.output_dir, directory) if directory else self.output_dir
             
-        # ディレクトリが存在しない場合は空リストを返す
-        if not search_dir.exists():
+            # 画像ファイルのリストを作成
+            image_files = []
+            for filename in os.listdir(target_dir):
+                if os.path.isfile(os.path.join(target_dir, filename)):
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in self.IMAGE_EXTENSIONS:
+                        image_files.append(filename)
+            
+            return sorted(image_files)
+        except Exception as e:
+            logger.error(f"画像一覧取得エラー: {e}")
             return []
-            
-        # 画像ファイルの拡張子
-        image_extensions = ['.png', '.jpg', '.jpeg', '.webp', '.bmp']
-        
-        # 画像ファイルを検索
-        image_files = []
-        for file in os.listdir(search_dir):
-            file_path = os.path.join(search_dir, file)
-            if os.path.isfile(file_path):
-                ext = os.path.splitext(file)[1].lower()
-                if ext in image_extensions:
-                    image_files.append(file)
-        
-        return image_files
     
-    def batch_rename(self, prefix=None, remove_pattern=None, directory=None):
-        """画像ファイルの一括リネーム
+    def batch_rename(self, prefix: Optional[str] = None,
+                    remove_pattern: Optional[str] = None,
+                    directory: Optional[str] = None) -> List[str]:
+        """ファイルの一括リネーム
         
         Args:
-            prefix (str, optional): 新しいファイル名の接頭辞
+            prefix (str, optional): 新しい接頭辞
             remove_pattern (str, optional): 削除するパターン
-            directory (str, optional): 対象ディレクトリ。指定がなければ基本ディレクトリ。
+            directory (str, optional): 対象ディレクトリ
         
         Returns:
             list: 新しいファイル名のリスト
         """
-        if directory:
-            target_dir = self.output_dir / directory
-        else:
-            target_dir = self.output_dir
+        try:
+            # 対象ディレクトリの設定
+            target_dir = os.path.join(self.output_dir, directory) if directory else self.output_dir
             
-        # ディレクトリが存在しない場合は空リストを返す
-        if not target_dir.exists():
-            return []
-        
-        # 画像ファイルのリストを取得
-        image_files = self.list_generated_images(directory)
-        new_names = []
-        
-        for filename in image_files:
-            old_path = os.path.join(target_dir, filename)
+            # ディレクトリが存在しない場合は空リストを返す
+            if not os.path.exists(target_dir):
+                logger.warning(f"ディレクトリが存在しません: {target_dir}")
+                return []
             
-            # 新しいファイル名を生成
-            new_filename = filename
+            # 画像ファイルのリストを取得
+            image_files = self.list_generated_images(directory)
+            new_names = []
             
-            # パターンを削除
-            if remove_pattern:
-                new_filename = new_filename.replace(remove_pattern, "")
-            
-            # 接頭辞を追加
-            if prefix:
-                name_parts = new_filename.rsplit(".", 1)
-                if len(name_parts) > 1:
-                    new_filename = f"{prefix}{name_parts[0]}.{name_parts[1]}"
-                else:
-                    new_filename = f"{prefix}{new_filename}"
-            
-            # 新しいパスを作成
-            new_path = os.path.join(target_dir, new_filename)
-            
-            # ファイル名の衝突を回避
-            counter = 1
-            while os.path.exists(new_path) and new_path != old_path:
-                name_parts = new_filename.rsplit(".", 1)
-                if len(name_parts) > 1:
-                    new_filename = f"{name_parts[0]}_{counter}.{name_parts[1]}"
-                else:
-                    new_filename = f"{new_filename}_{counter}"
+            for filename in image_files:
+                old_path = os.path.join(target_dir, filename)
+                
+                # 新しいファイル名を生成
+                new_filename = filename
+                
+                # パターンを削除
+                if remove_pattern:
+                    new_filename = new_filename.replace(remove_pattern, "")
+                
+                # 接頭辞を追加
+                if prefix:
+                    name_parts = new_filename.rsplit(".", 1)
+                    if len(name_parts) > 1:
+                        new_filename = f"{prefix}{name_parts[0]}.{name_parts[1]}"
+                    else:
+                        new_filename = f"{prefix}{new_filename}"
+                
+                # 新しいパスを作成
                 new_path = os.path.join(target_dir, new_filename)
-                counter += 1
+                
+                # ファイル名の衝突を回避
+                counter = 1
+                while os.path.exists(new_path) and new_path != old_path:
+                    name_parts = new_filename.rsplit(".", 1)
+                    if len(name_parts) > 1:
+                        new_filename = f"{name_parts[0]}_{counter}.{name_parts[1]}"
+                    else:
+                        new_filename = f"{new_filename}_{counter}"
+                    new_path = os.path.join(target_dir, new_filename)
+                    counter += 1
+                
+                # ファイルをリネーム
+                os.rename(old_path, new_path)
+                new_names.append(new_filename)
             
-            # ファイルをリネーム
-            os.rename(old_path, new_path)
-            new_names.append(new_filename)
-        
-        return new_names
+            return new_names
+        except Exception as e:
+            logger.error(f"一括リネームエラー: {e}")
+            return []
     
-    def load_image_metadata(self, image_path):
+    def load_image_metadata(self, image_path: str) -> Optional[Dict[str, Any]]:
         """画像のメタデータを読み込む
         
         Args:
             image_path (str): 画像ファイルのパス
         
         Returns:
-            dict: メタデータ辞書。ファイルが存在しない場合はNone。
+            dict: メタデータ辞書
         """
-        # 画像ファイルのパスがPATH、文字列どちらでも動くように
-        path = Path(image_path)
-        
-        # メタデータファイルのパスを作成（拡張子をjsonに変更）
-        metadata_path = path.with_suffix('.json')
-        
-        # メタデータファイルが存在するか確認
-        if not metadata_path.exists():
-            logger.warning(f"メタデータファイルが見つかりません: {metadata_path}")
-            return None
-        
         try:
-            # メタデータの読み込み
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
+            # メタデータファイルのパスを生成
+            metadata_path = os.path.splitext(image_path)[0] + ".json"
             
-            return metadata
+            # メタデータファイルが存在しない場合はNoneを返す
+            if not os.path.exists(metadata_path):
+                logger.warning(f"メタデータファイルが見つかりません: {metadata_path}")
+                return None
+            
+            # メタデータの読み込み
+            with open(metadata_path, "r") as f:
+                return json.load(f)
         except Exception as e:
             logger.error(f"メタデータ読み込みエラー: {e}")
             return None 
