@@ -13,12 +13,27 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
-class ImageUpscaler:
+class Upscaler:
     """画像アップスケールクラス"""
     
     def __init__(self):
         """初期化メソッド"""
         pass
+    
+    def get_optimal_dimensions(self, orig_w, orig_h, scale):
+        """アップスケール後の最適な画像サイズを計算する
+        
+        Args:
+            orig_w (int): 元の画像の幅
+            orig_h (int): 元の画像の高さ
+            scale (float): アップスケール倍率
+        
+        Returns:
+            tuple: (新しい幅, 新しい高さ)
+        """
+        width = int(orig_w * scale)
+        height = int(orig_h * scale)
+        return width, height
     
     def upscale(self, image_path, scale_factor=2.0, output_path=None):
         """画像をアップスケールする

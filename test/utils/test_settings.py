@@ -6,6 +6,7 @@ import pytest
 import os
 import json
 from unittest.mock import patch, MagicMock, mock_open
+from pathlib import Path
 
 class TestSettingsManager:
     """Test class for settings management utility."""
@@ -28,21 +29,18 @@ class TestSettingsManager:
         }
     
     def test_initialization(self):
-        """Test that the SettingsManager initializes correctly."""
+        """Test that settings manager initializes correctly."""
         with patch('os.path.exists', return_value=True):
             from utils.settings import SettingsManager
             
-            # Initialize with default settings
+            # Initialize with default settings dir
             manager = SettingsManager()
+            assert str(manager.settings_dir).endswith("settings")
             
-            # Check default properties
-            assert manager.settings_dir.endswith("settings")
-            
-            # Test with custom settings directory
-            manager = SettingsManager(settings_dir="custom_settings")
-            
-            # Check custom properties
-            assert manager.settings_dir.endswith("custom_settings")
+            # Initialize with custom settings dir
+            custom_dir = "custom_settings"
+            manager = SettingsManager(settings_dir=custom_dir)
+            assert str(manager.settings_dir).endswith(custom_dir)
     
     def test_settings_dir_creation(self):
         """Test that settings directory is created if it doesn't exist."""
@@ -74,7 +72,7 @@ class TestSettingsManager:
             
             # Check that the file was opened for writing
             profile_path = os.path.join(manager.settings_dir, "test_profile.json")
-            mock_file_handle.assert_called_once_with(profile_path, 'w')
+            mock_file_handle.assert_called_once_with(profile_path, 'w', encoding='utf-8')
             
             # Check that json.dump was called with the settings
             mock_json_dump.assert_called_once()
@@ -222,7 +220,7 @@ class TestSettingsManager:
             success = manager.export_settings(sample_settings, "exported_settings.json")
             
             # Check that the file was opened for writing
-            mock_file_handle.assert_called_once_with("exported_settings.json", 'w')
+            mock_file_handle.assert_called_once_with("exported_settings.json", 'w', encoding='utf-8')
             
             # Check that json.dump was called with the settings
             mock_json_dump.assert_called_once()

@@ -20,8 +20,8 @@ try:
     from src.generator.sd3_inf import SD3Inferencer
     from src.prompt.llm_generator import LLMPromptGenerator
     from src.prompt.json_builder import JSONPromptBuilder
-    from src.utils.upscaler import ImageUpscaler
-    from src.utils.watermark import WatermarkProcessor
+    from src.utils.upscaler import Upscaler
+    from src.utils.watermark import Watermarker
     from src.utils.file_manager import FileManager
 except ImportError as e:
     logger.warning(f"モジュールのインポートエラー: {e}")
@@ -29,8 +29,8 @@ except ImportError as e:
     SD3Inferencer = None
     LLMPromptGenerator = None
     JSONPromptBuilder = None
-    ImageUpscaler = None
-    WatermarkProcessor = None
+    Upscaler = None
+    Watermarker = None
     FileManager = None
 
 
@@ -236,12 +236,12 @@ class GradioInterface:
     
     def upscale_image(self, image, scale=2.0):
         """画像をアップスケールする"""
-        if not ImageUpscaler:
-            logger.warning("ImageUpscaler モジュールが利用できません")
+        if not Upscaler:
+            logger.warning("Upscaler モジュールが利用できません")
             return image
         
         try:
-            upscaler = ImageUpscaler()
+            upscaler = Upscaler()
             return upscaler.upscale(image, scale=scale)
         except Exception as e:
             logger.error(f"アップスケールエラー: {e}")
@@ -249,12 +249,12 @@ class GradioInterface:
     
     def add_watermark(self, image, text="Generated with SD3.5", position="bottom-right", opacity=0.5):
         """画像にウォーターマークを追加する"""
-        if not WatermarkProcessor:
-            logger.warning("WatermarkProcessor モジュールが利用できません")
+        if not Watermarker:
+            logger.warning("Watermarker モジュールが利用できません")
             return image
         
         try:
-            processor = WatermarkProcessor()
+            processor = Watermarker()
             return processor.add_watermark(image, text=text, position=position, opacity=opacity)
         except Exception as e:
             logger.error(f"ウォーターマーク追加エラー: {e}")

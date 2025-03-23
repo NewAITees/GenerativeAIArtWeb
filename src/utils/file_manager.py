@@ -7,7 +7,9 @@
 import os
 import re
 import json
+import stat
 import logging
+import shutil
 from pathlib import Path
 from datetime import datetime
 from PIL import Image
@@ -33,14 +35,49 @@ class FileManager:
             output_dir (str or Path, optional): 保存の基準ディレクトリ。
                 指定がない場合はプロジェクトルートのoutputsディレクトリを使用。
         """
-        self.output_dir = str(output_dir) if output_dir else str(project_root / "outputs")
+        # 環境変数からテスト用ディレクトリを取得
+        if 'TEST_OUTPUT_DIR' in os.environ and not output_dir:
+            self.output_dir = Path(os.environ['TEST_OUTPUT_DIR'])
+        else:
+            self.output_dir = Path(output_dir) if output_dir else project_root / "outputs"
         
-        # 基本ディレクトリが存在しない場合は作成
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir, exist_ok=True)
+        try:
+            # 基本ディレクトリが存在しない場合は作成
+            os.makedirs(str(self.output_dir), exist_ok=True)
+            
+            # 権限を設定
+            self._ensure_directory_permissions(self.output_dir)
+            
+            # サブディレクトリの作成
+            self._initialize_directories()
+            
+        except PermissionError as e:
+            logger.error(f"権限エラー: {self.output_dir} へのアクセスが拒否されました: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"初期化エラー: {e}")
+            raise
+    
+    def _ensure_directory_permissions(self, path: Path):
+        """ディレクトリの権限を確認し、必要に応じて修正する
         
-        # サブディレクトリの作成
-        self._initialize_directories()
+        Args:
+            path (Path): 確認するディレクトリのパス
+        """
+        try:
+            # ディレクトリが存在しない場合は作成
+            if not os.path.exists(str(path)):
+                os.makedirs(str(path), exist_ok=True)
+            
+            current_mode = os.stat(str(path)).st_mode
+            desired_mode = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
+            
+            if (current_mode & 0o777) != (desired_mode & 0o777):
+                os.chmod(str(path), desired_mode)
+                logger.info(f"ディレクトリの権限を修正しました: {path}")
+        except Exception as e:
+            logger.error(f"権限確認エラー: {path}: {e}")
+            raise
     
     def _initialize_directories(self):
         """基本ディレクトリ構造を初期化する"""
@@ -48,64 +85,14 @@ class FileManager:
         subdirs = ["general", "portraits", "landscapes", "abstracts"]
         
         for subdir in subdirs:
-            dir_path = os.path.join(self.output_dir, subdir)
-            if not os.path.exists(dir_path):
-                os.makedirs(dir_path, exist_ok=True)
-    
-    def save_image(self, image: Any, filename_prefix: str,
-                  directory: Optional[str] = None) -> Optional[str]:
-        """画像を指定したディレクトリとファイル名で保存する
-        
-        Args:
-            image: PIL.Imageまたはnumpy.ndarray形式の画像
-            filename_prefix (str): ファイル名の接頭辞
-            directory (str, optional): 保存先ディレクトリ。基本ディレクトリからの相対パス。
-                指定がなければ基本ディレクトリに保存。
-        
-        Returns:
-            str: 保存されたファイルの絶対パス
-        """
-        if image is None:
-            logger.warning("保存する画像がNoneです")
-            return None
-        
-        try:
-            # 保存先ディレクトリの準備
-            save_dir = os.path.join(self.output_dir, directory) if directory else self.output_dir
-            
-            # ディレクトリが存在しない場合は作成
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir, exist_ok=True)
-            
-            # ファイル名を生成
-            filename = self.generate_filename(filename_prefix)
-            
-            # ファイルパスの作成
-            file_path = os.path.join(save_dir, filename)
-            
-            # ファイル名の衝突を回避（同名ファイルが存在する場合）
-            counter = 1
-            while os.path.exists(file_path):
-                name_parts = filename.rsplit(".", 1)
-                if len(name_parts) > 1:
-                    new_filename = f"{name_parts[0]}_{counter}.{name_parts[1]}"
-                else:
-                    new_filename = f"{filename}_{counter}"
-                file_path = os.path.join(save_dir, new_filename)
-                counter += 1
-            
-            # 画像の保存
-            if hasattr(image, 'save'):
-                image.save(file_path)
-            else:
-                logger.warning(f"画像オブジェクトにsaveメソッドがありません: {type(image)}")
-                return None
-            
-            logger.info(f"画像を保存しました: {file_path}")
-            return file_path
-        except Exception as e:
-            logger.error(f"画像保存エラー: {e}")
-            return None
+            try:
+                dir_path = self.output_dir / subdir
+                if not os.path.exists(str(dir_path)):
+                    os.makedirs(str(dir_path), exist_ok=True)
+                    self._ensure_directory_permissions(dir_path)
+            except Exception as e:
+                logger.error(f"サブディレクトリ作成エラー: {subdir}: {e}")
+                continue
     
     def generate_filename(self, prompt: str, prefix: str = "",
                         include_date: bool = True, include_time: bool = True,
@@ -146,7 +133,7 @@ class FileManager:
             extension = extension[1:]
         
         # ファイル名の構築
-        return "_".join(parts) + f".{extension}"
+        return "_".join(filter(None, parts)) + f".{extension}"
     
     def _sanitize_filename(self, filename: str) -> str:
         """ファイル名から無効な文字を除去する
@@ -159,12 +146,72 @@ class FileManager:
         """
         # 無効な文字を置換
         sanitized = re.sub(r'[\\/*?:"<>|]', "_", filename)
+        # スペースをアンダースコアに置換
+        sanitized = re.sub(r'\s+', "_", sanitized)
         # 先頭と末尾の空白や記号を削除
         sanitized = sanitized.strip(" ._-")
         # 空文字列になった場合はデフォルト名
         return sanitized if sanitized else "image"
     
-    def _save_metadata(self, metadata_path, metadata):
+    def save_image(self, image: Any, filename_prefix: str,
+                  directory: Optional[str] = None) -> Optional[str]:
+        """画像を指定したディレクトリとファイル名で保存する
+        
+        Args:
+            image: PIL.Imageまたはnumpy.ndarray形式の画像
+            filename_prefix (str): ファイル名の接頭辞
+            directory (str, optional): 保存先ディレクトリ。基本ディレクトリからの相対パス。
+                指定がなければ基本ディレクトリに保存。
+        
+        Returns:
+            str: 保存されたファイルの絶対パス
+        """
+        if image is None:
+            logger.warning("保存する画像がNoneです")
+            return None
+        
+        try:
+            # 保存先ディレクトリの準備
+            save_dir = Path(self.output_dir) / directory if directory else self.output_dir
+            
+            # ディレクトリが存在しない場合は作成
+            if not save_dir.exists():
+                save_dir.mkdir(parents=True, exist_ok=True)
+                self._ensure_directory_permissions(save_dir)
+            
+            # ファイル名を生成
+            filename = self.generate_filename(filename_prefix)
+            
+            # ファイルパスの作成
+            file_path = save_dir / filename
+            
+            # ファイル名の衝突を回避（同名ファイルが存在する場合）
+            counter = 1
+            while file_path.exists():
+                name_parts = filename.rsplit(".", 1)
+                if len(name_parts) > 1:
+                    new_filename = f"{name_parts[0]}_{counter}.{name_parts[1]}"
+                else:
+                    new_filename = f"{filename}_{counter}"
+                file_path = save_dir / new_filename
+                counter += 1
+            
+            # 画像の保存
+            if hasattr(image, 'save'):
+                image.save(str(file_path))
+                # ファイルに644権限を設定
+                os.chmod(str(file_path), stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+            else:
+                logger.warning(f"画像オブジェクトにsaveメソッドがありません: {type(image)}")
+                return None
+            
+            logger.info(f"画像を保存しました: {file_path}")
+            return str(file_path)
+        except Exception as e:
+            logger.error(f"画像保存エラー: {e}")
+            return None
+    
+    def _save_metadata(self, metadata_path: Path, metadata: Dict[str, Any]):
         """メタデータをJSONファイルとして保存する
         
         Args:
@@ -175,10 +222,26 @@ class FileManager:
             # タイムスタンプを追加
             metadata["saved_at"] = datetime.now().isoformat()
             
-            with open(metadata_path, "w", encoding="utf-8") as f:
+            # 一時ファイルに書き込み
+            temp_path = metadata_path.with_name(metadata_path.name + ".tmp")
+            with open(str(temp_path), "w", encoding="utf-8") as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
+            
+            # 一時ファイルの権限を設定
+            os.chmod(str(temp_path), stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+            
+            # 一時ファイルを本来のファイルに移動（アトミック操作）
+            shutil.move(str(temp_path), str(metadata_path))
+            
         except Exception as e:
             logger.error(f"メタデータ保存エラー: {e}")
+            # 一時ファイルが残っている場合は削除
+            if temp_path.exists():
+                try:
+                    os.remove(str(temp_path))
+                except Exception:
+                    pass
+            raise
     
     def get_directories(self):
         """利用可能な保存ディレクトリの一覧を取得する

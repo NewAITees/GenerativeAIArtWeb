@@ -5,9 +5,11 @@ import os
 import sys
 import pytest
 from unittest.mock import MagicMock, patch
+from pathlib import Path
 
-# Add the src directory to the path so we can import modules from there
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+# Add src directory to Python path
+src_path = str(Path(__file__).parent.parent / "src")
+sys.path.insert(0, src_path)
 
 # Mock for the Stable Diffusion 3.5 model
 @pytest.fixture

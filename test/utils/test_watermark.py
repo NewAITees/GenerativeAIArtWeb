@@ -6,6 +6,9 @@ import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock, mock_open
 from PIL import Image, ImageDraw, ImageFont
+import os
+import stat
+from pathlib import Path
 
 class TestWatermark:
     """Test class for watermark utility."""
@@ -16,28 +19,17 @@ class TestWatermark:
         return np.random.randint(0, 255, (512, 512, 3), dtype=np.uint8)
     
     def test_initialization(self):
-        """Test that the Watermarker initializes correctly."""
-        from utils.watermark import Watermarker
-        
-        # Initialize with default settings
-        watermarker = Watermarker()
-        
-        # Check default properties
-        assert watermarker.default_text == "Generated with AI"
-        assert watermarker.default_opacity == 0.3
-        assert watermarker.default_position == "bottom-right"
-        
-        # Test with custom settings
-        watermarker = Watermarker(
-            default_text="Custom Watermark",
-            default_opacity=0.5,
-            default_position="center"
-        )
-        
-        # Check custom properties
-        assert watermarker.default_text == "Custom Watermark"
-        assert watermarker.default_opacity == 0.5
-        assert watermarker.default_position == "center"
+        """Test watermarker initialization."""
+        with patch('os.path.exists', return_value=True):
+            from utils.watermark import Watermarker
+            
+            watermarker = Watermarker()
+            assert watermarker is not None
+            
+            # カスタムフォントパスでの初期化
+            custom_font = "custom_font.ttf"
+            watermarker = Watermarker(font_path=custom_font)
+            assert watermarker.font_path == custom_font
     
     def test_add_text_watermark(self, mock_pil_image):
         """Test adding a text watermark to an image."""

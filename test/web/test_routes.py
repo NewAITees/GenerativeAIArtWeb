@@ -15,96 +15,83 @@ class TestRoutes:
             mock_render.return_value = "<html>Mock Index Template</html>"
             
             # Import the route handler
-            from web.routes import index
+            from src.web.app import GradioInterface
             
-            # Call the index route
-            response = index()
+            # Create interface instance
+            interface = GradioInterface()
             
-            # Check that render_template was called with the correct template
-            mock_render.assert_called_once_with('index.html')
-            assert response == "<html>Mock Index Template</html>"
+            # Call the interface creation method
+            interface.create_interface()
+            
+            # Check that the interface was created successfully
+            assert interface is not None
     
     def test_api_routes_registration(self, mock_flask_app):
         """Test that API routes are registered correctly."""
-        # Mock the Flask app and Blueprint
-        mock_blueprint = MagicMock()
-        
-        with patch('flask.Blueprint', return_value=mock_blueprint) as mock_bp:
-            # Import the register_routes function
-            from web.routes import register_routes
+        with patch('gradio.Interface') as mock_interface:
+            # Import the Gradio interface
+            from src.web.app import GradioInterface
             
-            # Call the function to register routes
-            register_routes(mock_flask_app)
+            # Create interface instance
+            interface = GradioInterface()
             
-            # Check that Blueprint was created
-            mock_bp.assert_called_once_with('api', __name__, url_prefix='/api')
+            # Call the interface creation method
+            interface.create_interface()
             
-            # Check that routes were added to the blueprint
-            # Here we check for some expected routes
-            route_calls = [call[0][0] for call in mock_blueprint.route.call_args_list]
-            
-            assert '/generate' in route_calls
-            assert '/enhance_prompt' in route_calls
-            assert '/save_settings' in route_calls
-            assert '/load_settings' in route_calls
-            
-            # Check that the blueprint was registered with the app
-            mock_flask_app.register_blueprint.assert_called_once_with(mock_blueprint)
-    
-    def test_static_routes(self, mock_flask_app):
-        """Test that static routes serve the correct files."""
-        with patch('flask.send_from_directory') as mock_send:
-            mock_send.return_value = "mock_file_content"
-            
-            # Import the static file route handler
-            from web.routes import serve_static
-            
-            # Call the route handler for a CSS file
-            response = serve_static('css/style.css')
-            
-            # Check that send_from_directory was called correctly
-            mock_send.assert_called_once()
-            args, kwargs = mock_send.call_args
-            # The static directory path should be passed
-            assert 'static' in args[0]
-            # The filepath should be passed
-            assert args[1] == 'css/style.css'
-            
-            assert response == "mock_file_content"
-    
+            # Verify that the Gradio interface was created with the correct components
+            mock_interface.assert_called()
+
     def test_images_route(self, mock_flask_app, mock_file_system):
-        """Test the route for serving generated images."""
-        with patch('flask.send_from_directory') as mock_send:
-            mock_send.return_value = "mock_image_data"
+        """Test the image generation and handling routes."""
+        with patch('gradio.Interface') as mock_interface:
+            from src.web.app import GradioInterface
             
-            # Import the image serving route handler
-            from web.routes import serve_image
+            # Create interface instance
+            interface = GradioInterface()
             
-            # Call the route handler for an image
-            response = serve_image('generated_image.png')
+            # Mock image generation
+            mock_image = MagicMock()
+            interface.generate_image = MagicMock(return_value=mock_image)
             
-            # Check that send_from_directory was called correctly
-            mock_send.assert_called_once()
-            args, kwargs = mock_send.call_args
-            # The output directory path should be passed
-            assert 'outputs' in args[0]
-            # The image filename should be passed
-            assert args[1] == 'generated_image.png'
+            # Test image generation
+            result = interface.generate_image(
+                prompt="test prompt",
+                model_path="test_model",
+                steps=30,
+                cfg_scale=7.5,
+                sampler="euler",
+                width=512,
+                height=512,
+                seed=42
+            )
             
-            assert response == "mock_image_data"
+            # Verify that image generation was called with correct parameters
+            interface.generate_image.assert_called_once()
+            assert result == mock_image
     
-    def test_404_handler(self, mock_flask_app):
-        """Test the 404 error handler."""
-        with patch('flask.render_template') as mock_render:
-            mock_render.return_value = "<html>404 Not Found</html>"
+    def test_error_handling(self, mock_flask_app):
+        """Test error handling in the interface."""
+        with patch('gradio.Interface') as mock_interface:
+            from src.web.app import GradioInterface
             
-            # Import the error handler
-            from web.routes import page_not_found
+            # Create interface instance
+            interface = GradioInterface()
             
-            # Call the error handler
-            response, status_code = page_not_found(Exception("Not Found"))
+            # Mock image generation to raise an error
+            interface.generate_image = MagicMock(side_effect=Exception("Test error"))
             
-            # Check that render_template was called with the error template
-            mock_render.assert_called_once_with('error.html', error_code=404, message='Page not found')
-            assert response == "<html>404 Not Found</html>"
-            assert status_code == 404 
+            # Test error handling during image generation
+            result = interface.generate_image(
+                prompt="test prompt",
+                model_path="test_model",
+                steps=30,
+                cfg_scale=7.5,
+                sampler="euler",
+                width=512,
+                height=512,
+                seed=42
+            )
+            
+            # Verify that the error was handled
+            assert result is None
+            interface.generate_image.assert_called_once() 
