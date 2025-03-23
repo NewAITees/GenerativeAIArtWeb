@@ -56,6 +56,9 @@ class FileManager:
         except PermissionError as e:
             logger.error(f"権限エラー: {self.output_dir} へのアクセスが拒否されました: {e}")
             raise
+        except FileNotFoundError as e:
+            logger.error(f"ディレクトリ作成エラー: {self.output_dir} を作成できません: {e}")
+            raise
         except Exception as e:
             logger.error(f"初期化エラー: {e}")
             raise
@@ -63,37 +66,36 @@ class FileManager:
     def generate_filename(
         self, 
         prompt: str, 
-        config: Optional[Union[Dict[str, Any], FilenameConfig]] = None
+        *,
+        prefix: str = "",
+        include_date: bool = True,
+        include_time: bool = False,
+        extension: str = "png"
     ) -> str:
         """ファイル名を生成する
         
         Args:
             prompt (str): プロンプトテキスト
-            config (dict or FilenameConfig, optional): ファイル名生成設定
+            prefix (str, optional): ファイル名の接頭辞
+            include_date (bool, optional): 日付を含めるかどうか
+            include_time (bool, optional): 時刻を含めるかどうか
+            extension (str, optional): ファイルの拡張子
         
         Returns:
             str: 生成されたファイル名
         """
-        # 設定をFilenameConfigに変換
-        if config is None:
-            filename_config = FilenameConfig()
-        elif isinstance(config, dict):
-            filename_config = FilenameConfig.model_validate(config)
-        else:
-            filename_config = config
-        
         # プロンプトの短縮と正規化
         short_prompt = self._sanitize_filename(prompt)[:30]
         
         # 現在の日時
         now = datetime.now()
-        date_str = now.strftime("%Y%m%d") if filename_config.include_date else ""
-        time_str = now.strftime("%H%M%S") if filename_config.include_time else ""
+        date_str = now.strftime("%Y%m%d") if include_date else ""
+        time_str = now.strftime("%H%M%S") if include_time else ""
         
         # 各部分を組み合わせてファイル名を作成
         parts = []
-        if filename_config.prefix:
-            parts.append(filename_config.prefix)
+        if prefix:
+            parts.append(prefix)
         if short_prompt:
             parts.append(short_prompt)
         if date_str:
@@ -101,8 +103,7 @@ class FileManager:
         if time_str:
             parts.append(time_str)
         
-        # 拡張子を取得
-        extension = filename_config.extension.value
+        # 拡張子の処理
         if extension.startswith('.'):
             extension = extension[1:]
         
@@ -175,18 +176,30 @@ class FileManager:
             directory (Path): 権限を設定するディレクトリ
         """
         try:
+            # ディレクトリが存在しない場合は作成
+            if not os.path.exists(str(directory)):
+                os.makedirs(str(directory), exist_ok=True)
+            
             # ディレクトリの権限を設定（755 = rwxr-xr-x）
-            directory.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+            os.chmod(str(directory), stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+        except FileExistsError:
+            # ディレクトリがすでに存在する場合は無視
+            logger.debug(f"ディレクトリはすでに存在します: {directory}")
         except Exception as e:
             logger.warning(f"ディレクトリの権限設定に失敗しました: {e}")
+            raise
     
     def _initialize_directories(self) -> None:
         """必要なサブディレクトリを作成する"""
         subdirs = ['thumbnails', 'metadata', 'archive']
         for subdir in subdirs:
-            path = self.output_dir / subdir
-            path.mkdir(exist_ok=True)
-            self._ensure_directory_permissions(path)
+            try:
+                path = self.output_dir / subdir
+                os.makedirs(str(path), exist_ok=True)
+                self._ensure_directory_permissions(path)
+            except Exception as e:
+                logger.error(f"サブディレクトリの初期化に失敗しました: {subdir}: {e}")
+                raise
     
     def _save_metadata(self, path: Path, metadata: Dict[str, Any]) -> None:
         """メタデータをJSONファイルとして保存する
