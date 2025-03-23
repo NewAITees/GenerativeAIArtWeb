@@ -50,9 +50,12 @@ class TestUpscaler:
     
     def test_upscale_with_different_methods(self, mock_pil_image):
         """Test upscaling with different resampling methods."""
-        with patch('PIL.Image.open', return_value=mock_pil_image), \
-             patch('PIL.Image.resize') as mock_resize:
-            
+        mock_pil_image.size = (1024, 1024)
+        mock_resized = MagicMock()
+        mock_resized.size = (2048, 2048)
+        mock_pil_image.resize.return_value = mock_resized
+        
+        with patch('PIL.Image.open', return_value=mock_pil_image):
             from utils.upscaler import Upscaler
             from PIL import Image
             
@@ -67,13 +70,13 @@ class TestUpscaler:
             
             # Test each method
             for method_name, resampling_method in method_map.items():
-                mock_resize.reset_mock()
+                mock_pil_image.resize.reset_mock()
                 
                 upscaler = Upscaler(method=method_name)
                 upscaler.upscale("test_image.png", scale=2.0)
                 
                 # Check the resampling method used
-                _, kwargs = mock_resize.call_args
+                _, kwargs = mock_pil_image.resize.call_args
                 assert kwargs["resample"] == resampling_method
     
     def test_upscale_with_denoise(self, mock_pil_image):

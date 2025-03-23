@@ -43,7 +43,7 @@ class FileManager:
         
         try:
             # 基本ディレクトリが存在しない場合は作成
-            os.makedirs(str(self.output_dir), exist_ok=True)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
             
             # 権限を設定
             self._ensure_directory_permissions(self.output_dir)
@@ -51,11 +51,8 @@ class FileManager:
             # サブディレクトリの作成
             self._initialize_directories()
             
-        except PermissionError as e:
-            logger.error(f"権限エラー: {self.output_dir} へのアクセスが拒否されました: {e}")
-            raise
         except Exception as e:
-            logger.error(f"初期化エラー: {e}")
+            logger.error(f"出力ディレクトリの初期化エラー: {e}")
             raise
     
     def _ensure_directory_permissions(self, path: Path):

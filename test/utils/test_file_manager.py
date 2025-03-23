@@ -25,26 +25,21 @@ def mock_image():
 @pytest.fixture
 def file_manager():
     """FileManagerインスタンスを作成する"""
-    with patch('os.path.exists') as mock_exists, \
-         patch('os.makedirs') as mock_makedirs, \
+    with patch('pathlib.Path.exists', return_value=True), \
+         patch('pathlib.Path.mkdir') as mock_mkdir, \
          patch('os.chmod') as mock_chmod, \
-         patch('os.stat') as mock_stat, \
-         patch('pathlib.Path.exists', return_value=True), \
-         patch('pathlib.Path.mkdir') as mock_mkdir:
+         patch('os.stat') as mock_stat:
         
         # 基本的なモックの設定
-        mock_exists.return_value = True
         mock_stat.return_value.st_mode = 0o755
         
         # カスタム出力ディレクトリを使用
         manager = FileManager("custom_outputs")
         
         # モックオブジェクトをマネージャに追加
-        manager._mock_exists = mock_exists
-        manager._mock_makedirs = mock_makedirs
+        manager._mock_mkdir = mock_mkdir
         manager._mock_chmod = mock_chmod
         manager._mock_stat = mock_stat
-        manager._mock_mkdir = mock_mkdir
         
         return manager
 
@@ -78,7 +73,7 @@ class TestFileManager:
     def test_initialization(self, file_manager):
         """初期化のテスト"""
         # 出力ディレクトリの作成を確認
-        file_manager._mock_makedirs.assert_any_call("custom_outputs", exist_ok=True)
+        file_manager._mock_mkdir.assert_any_call("custom_outputs", exist_ok=True)
         
         # 権限の設定を確認
         expected_mode = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
@@ -88,14 +83,14 @@ class TestFileManager:
         """出力ディレクトリ作成のテスト"""
         # 新しいディレクトリを作成
         new_dir = "new_dir"
-        with patch('os.path.exists', return_value=False), \
+        with patch('pathlib.Path.exists', return_value=False), \
              patch('os.stat') as mock_stat, \
-             patch('os.makedirs') as mock_makedirs:
+             patch('pathlib.Path.mkdir') as mock_mkdir:
             mock_stat.return_value.st_mode = 0o755
             file_manager._ensure_directory_permissions(Path(new_dir))
         
         # ディレクトリの作成を確認
-        mock_makedirs.assert_called_with(new_dir, exist_ok=True)
+        mock_mkdir.assert_called_with(new_dir, exist_ok=True)
         
         # 権限の設定を確認
         expected_mode = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
@@ -169,12 +164,12 @@ class TestFileManager:
     
     def test_organize_by_folder(self, file_manager):
         """Test organizing images into folders."""
-        with patch('os.path.exists', return_value=False), \
-             patch('os.makedirs') as mock_makedirs:
+        with patch('pathlib.Path.exists', return_value=False), \
+             patch('pathlib.Path.mkdir') as mock_mkdir:
             
             path = file_manager.organize_by_folder("test_cat", "image.png", "prompt")
             
-            mock_makedirs.assert_called_once()
+            mock_mkdir.assert_called_once()
             assert "test_cat" in path
             assert path.endswith("image.png")
     
@@ -182,9 +177,9 @@ class TestFileManager:
         """Test listing generated images."""
         mock_files = ["img1.png", "img2.jpg", "data.json", "img3.jpeg"]
         
-        with patch('os.path.exists', return_value=True), \
+        with patch('pathlib.Path.exists', return_value=True), \
              patch('os.listdir', return_value=mock_files), \
-             patch('os.path.isfile', return_value=True):
+             patch('pathlib.Path.isfile', return_value=True):
             
             images = file_manager.list_generated_images()
             assert len(images) == 3
@@ -195,8 +190,8 @@ class TestFileManager:
         """画像保存と権限設定のテスト"""
         # 画像の保存
         with patch('pathlib.Path.exists', return_value=False), \
-             patch('os.path.exists', return_value=True), \
-             patch('os.makedirs') as mock_makedirs, \
+             patch('pathlib.Path.isfile', return_value=True), \
+             patch('pathlib.Path.mkdir') as mock_mkdir, \
              patch('os.chmod') as mock_chmod:
             
             # 画像を保存
@@ -210,7 +205,7 @@ class TestFileManager:
         mock_chmod.assert_any_call(ANY, expected_mode)
         
         # ディレクトリの作成と権限設定を確認
-        mock_makedirs.assert_called_with("custom_outputs", exist_ok=True)
+        mock_mkdir.assert_called_with("custom_outputs", exist_ok=True)
         
         # ディレクトリの権限設定を確認（755権限）
         expected_dir_mode = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
@@ -223,9 +218,9 @@ class TestFileManager:
         with patch('builtins.open', mock_open()) as mock_file, \
              patch('os.chmod') as mock_chmod, \
              patch('shutil.move') as mock_move, \
-             patch('os.path.exists', return_value=True), \
              patch('pathlib.Path.exists', return_value=True), \
-             patch('os.makedirs') as mock_makedirs:
+             patch('pathlib.Path.isfile', return_value=True), \
+             patch('pathlib.Path.mkdir') as mock_mkdir:
             
             manager = FileManager()
             test_path = Path("test.json")
@@ -248,7 +243,8 @@ class TestFileManager:
         metadata = {"prompt": "test", "steps": 30}
         
         with patch('builtins.open', side_effect=Exception("Write error")), \
-             patch('os.path.exists', return_value=True), \
+             patch('pathlib.Path.exists', return_value=True), \
+             patch('pathlib.Path.isfile', return_value=True), \
              patch('os.remove') as mock_remove, \
              pytest.raises(Exception) as exc_info:
             
@@ -272,7 +268,7 @@ class TestFileManager:
         }
         
         # 正常系のテスト
-        with patch('os.path.exists', return_value=True), \
+        with patch('pathlib.Path.exists', return_value=True), \
              patch('builtins.open', mock_open(read_data=json.dumps(metadata))):
             
             loaded = file_manager.load_image_metadata("test.png")
@@ -282,11 +278,11 @@ class TestFileManager:
             assert loaded["saved_at"] == "2024-03-23T12:00:00"
         
         # 存在しないファイルのテスト
-        with patch('os.path.exists', return_value=False):
+        with patch('pathlib.Path.exists', return_value=False):
             assert file_manager.load_image_metadata("missing.png") is None
         
         # JSONデコードエラーのテスト
-        with patch('os.path.exists', return_value=True), \
+        with patch('pathlib.Path.exists', return_value=True), \
              patch('builtins.open', mock_open(read_data="invalid json")):
             
             assert file_manager.load_image_metadata("invalid.png") is None
@@ -312,8 +308,8 @@ class TestFileManager:
              patch('json.dump') as mock_dump, \
              patch('shutil.move') as mock_move, \
              patch('pathlib.Path.exists', return_value=True), \
-             patch('os.path.exists', return_value=True), \
-             patch('os.chmod') as mock_chmod:
+             patch('pathlib.Path.isfile', return_value=True), \
+             patch('pathlib.Path.mkdir') as mock_mkdir:
             
             # ファイルハンドルのモックを設定
             mock_file = MagicMock()
@@ -331,6 +327,7 @@ class TestFileManager:
             
             # 一時ファイルの権限設定を確認
             expected_mode = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
+            mock_mkdir.assert_called_once_with(metadata_path.parent, exist_ok=True)
             mock_chmod.assert_any_call(temp_path, expected_mode)
             
             # 一時ファイルの移動を確認
@@ -344,10 +341,10 @@ class TestFileManager:
         # 一時ファイルの操作をモック
         with patch('builtins.open') as mock_open, \
              patch('json.dump') as mock_dump, \
+             patch('pathlib.Path.isfile', return_value=True), \
              patch('os.remove') as mock_remove, \
              patch('pathlib.Path.exists') as mock_exists, \
-             patch('os.path.exists', return_value=True), \
-             patch('os.chmod') as mock_chmod:
+             patch('pathlib.Path.mkdir') as mock_mkdir:
             
             # エラーを発生させる
             mock_dump.side_effect = Exception("Test error")

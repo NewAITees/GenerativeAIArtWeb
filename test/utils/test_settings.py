@@ -44,16 +44,16 @@ class TestSettingsManager:
     
     def test_settings_dir_creation(self):
         """Test that settings directory is created if it doesn't exist."""
-        with patch('os.path.exists', return_value=False), \
-             patch('os.makedirs') as mock_makedirs:
+        with patch('pathlib.Path.exists', return_value=False), \
+             patch('pathlib.Path.mkdir') as mock_mkdir:
             
             from utils.settings import SettingsManager
             
             # Initialize with non-existent settings dir
             manager = SettingsManager(settings_dir="new_settings_dir")
             
-            # Check that makedirs was called
-            mock_makedirs.assert_called_once_with("new_settings_dir", exist_ok=True)
+            # Check that mkdir was called
+            mock_mkdir.assert_called_once_with(exist_ok=True)
     
     def test_save_settings_profile(self, sample_settings):
         """Test saving settings as a profile."""
@@ -137,7 +137,7 @@ class TestSettingsManager:
     
     def test_delete_profile(self):
         """Test deleting a profile."""
-        with patch('os.path.exists', return_value=True), \
+        with patch('pathlib.Path.exists', return_value=True), \
              patch('os.remove') as mock_remove:
             
             from utils.settings import SettingsManager
@@ -148,7 +148,7 @@ class TestSettingsManager:
             success = manager.delete_profile("test_profile")
             
             # Check that remove was called with the correct path
-            profile_path = os.path.join(manager.settings_dir, "test_profile.json")
+            profile_path = str(manager.settings_dir / "test_profile.json")
             mock_remove.assert_called_once_with(profile_path)
             
             # Check the return value

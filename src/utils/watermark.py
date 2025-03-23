@@ -144,7 +144,7 @@ class Watermarker:
             logger.error(f"イメージウォーターマーク追加エラー: {e}")
             return image
     
-    def _calculate_position(self, img_width, img_height, wm_width, wm_height, position):
+    def _calculate_position(self, img_width, img_height, wm_width, wm_height, position, padding=0):
         """ウォーターマークの位置を計算する
         
         Args:
@@ -153,11 +153,11 @@ class Watermarker:
             wm_width (int): ウォーターマークの幅
             wm_height (int): ウォーターマークの高さ
             position (str): 位置指定（"top-left", "top-right", "bottom-left", "bottom-right", "center"）
+            padding (int, optional): ウォーターマークと画像端との間隔。デフォルトは0。
         
         Returns:
             tuple: (x座標, y座標)
         """
-        padding = 20
         if position == "top-left":
             return (padding, padding)
         elif position == "top-right":
