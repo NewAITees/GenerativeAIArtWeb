@@ -173,15 +173,30 @@ class GradioInterface:
         preset_files = self.settings_dir.glob("*.json")
         return [p.stem for p in preset_files]
     
-    def generate_prompt_llm(self, base_prompt):
+    def get_available_llm_models(self):
+        """利用可能なLLMモデル一覧を取得する"""
+        try:
+            # ollamaクライアントを作成して利用可能なモデルを取得
+            import ollama
+            client = ollama.Client()
+            models = client.list()
+            model_names = [model['name'] for model in models.get('models', [])]
+            return model_names if model_names else ["llama3"]
+        except Exception as e:
+            logger.error(f"LLMモデル一覧取得エラー: {e}")
+            # エラー時はデフォルトモデルを返す
+            return ["llama3"]
+
+    def generate_prompt_llm(self, base_prompt, model_name="llama3", style="指定なし"):
         """LLMを使用してプロンプトを生成・拡張する"""
         if not LLMPromptGenerator:
             logger.warning("LLMPromptGenerator モジュールが利用できません")
             return f"拡張プロンプト: {base_prompt}"
         
         try:
-            generator = LLMPromptGenerator()
-            return generator.generate_prompt(base_prompt)
+            generator = LLMPromptGenerator(model_name=model_name)
+            style_param = None if style == "指定なし" else style
+            return generator.generate_prompt(base_prompt, style=style_param)
         except Exception as e:
             logger.error(f"プロンプト生成エラー: {e}")
             return base_prompt
@@ -289,12 +304,11 @@ class GradioInterface:
     
     def create_interface(self):
         """Gradioインターフェースを作成する"""
-        with gr.Blocks(title="SD3.5画像生成") as interface:
-            gr.Markdown("# SD3.5 画像生成ウェブアプリケーション")
-            gr.Markdown("Stable Diffusion 3.5モデルを使用して、テキストプロンプトから高品質な画像を生成します。")
+        with gr.Blocks(title="SD3.5 Image Generator", theme=gr.themes.Soft()) as interface:
+            gr.Markdown("# SD3.5 Image Generator")
             
             with gr.Tabs():
-                # 画像生成タブ
+                # メイン画像生成タブ
                 with gr.TabItem("画像生成"):
                     with gr.Row():
                         with gr.Column(scale=2):
@@ -428,11 +442,27 @@ class GradioInterface:
                     with gr.Row():
                         with gr.Column():
                             gr.Markdown("### LLMプロンプト生成")
+                            
+                            # モデル選択を追加
+                            llm_model = gr.Dropdown(
+                                label="LLMモデル",
+                                choices=self.get_available_llm_models(),
+                                value="llama3"
+                            )
+                            
                             base_prompt = gr.Textbox(
                                 label="基本プロンプト",
                                 placeholder="基本的なアイデアを入力してください",
                                 lines=2
                             )
+                            
+                            # スタイル選択を追加
+                            prompt_style = gr.Dropdown(
+                                label="スタイル",
+                                choices=["指定なし", "photorealistic", "anime", "oil painting", "watercolor", "digital art"],
+                                value="指定なし"
+                            )
+                            
                             generate_llm_btn = gr.Button("LLMでプロンプト生成")
                             llm_output = gr.Textbox(
                                 label="生成されたプロンプト",
@@ -440,9 +470,9 @@ class GradioInterface:
                                 interactive=False
                             )
                             use_llm_prompt_btn = gr.Button("このプロンプトを使用")
-                        
+
                         with gr.Column():
-                            gr.Markdown("### JSONプロンプト構築")
+                            gr.Markdown("### JSONプロンプト生成")
                             
                             # JSONプロンプト要素を動的に読み込み
                             elements = self.load_prompt_elements()
@@ -545,11 +575,18 @@ class GradioInterface:
                 outputs=[presets]
             )
             
-            # プロンプト生成
+            # LLMプロンプト生成のイベントハンドラ
             generate_llm_btn.click(
-                fn=self.generate_prompt_llm,
-                inputs=[base_prompt],
+                fn=lambda prompt, model, style: self.generate_prompt_llm(prompt, model, style),
+                inputs=[base_prompt, llm_model, prompt_style],
                 outputs=[llm_output]
+            )
+            
+            # 生成されたプロンプトを使用するイベントハンドラ
+            use_llm_prompt_btn.click(
+                fn=lambda x: x,
+                inputs=[llm_output],
+                outputs=[prompt]
             )
             
             generate_json_btn.click(
@@ -561,12 +598,6 @@ class GradioInterface:
                 }),
                 inputs=[json_subject, json_style, json_elements, json_lighting],
                 outputs=[json_output]
-            )
-            
-            use_llm_prompt_btn.click(
-                fn=lambda x: x,
-                inputs=[llm_output],
-                outputs=[prompt]
             )
             
             use_json_prompt_btn.click(
