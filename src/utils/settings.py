@@ -47,7 +47,7 @@ class SettingsManager:
             profile_path = self.settings_dir / f"{profile_name}.json"
             
             # 設定を保存
-            with open(profile_path, "w", encoding="utf-8") as f:
+            with open(str(profile_path), "w", encoding="utf-8") as f:
                 json.dump(settings, f, ensure_ascii=False, indent=2)
             
             logger.info(f"設定プロファイルを保存しました: {profile_path}")
