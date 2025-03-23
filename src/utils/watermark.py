@@ -1,13 +1,12 @@
 """
-ウォーターマーク機能
+画像へのウォーターマーク追加機能
 
-このモジュールでは、生成された画像にウォーターマークを追加する機能を提供します。
+このモジュールでは、画像へのウォーターマーク追加機能を提供します。
 """
 
 import os
 import logging
 from pathlib import Path
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 # ロギング設定
@@ -17,136 +16,179 @@ logger = logging.getLogger(__name__)
 project_root = Path(__file__).parent.parent.parent.absolute()
 
 
-class WatermarkProcessor:
-    """ウォーターマーク処理クラス"""
+class ImageWatermarker:
+    """画像ウォーターマーククラス"""
     
     def __init__(self, font_path=None):
         """初期化メソッド
         
         Args:
-            font_path (str, optional): 使用するフォントのパス。
+            font_path (str or Path, optional): 使用するフォントファイルのパス。
                 指定がない場合はデフォルトフォントを使用。
         """
-        # デフォルトのフォントパス（環境に依存）
         self.font_path = font_path
-        self.default_font_size = 24
-        
-        # フォント読み込み試行（存在する場合）
         self._initialize_font()
     
     def _initialize_font(self):
         """フォントを初期化する"""
-        self.font = None
-        
         try:
             if self.font_path and os.path.exists(self.font_path):
-                self.font = ImageFont.truetype(self.font_path, self.default_font_size)
-                logger.info(f"カスタムフォントを読み込みました: {self.font_path}")
+                logger.info(f"カスタムフォントを使用: {self.font_path}")
+            else:
+                # デフォルトフォントパスを設定
+                default_font_path = os.path.join(project_root, "assets", "fonts", "default.ttf")
+                if os.path.exists(default_font_path):
+                    self.font_path = default_font_path
+                    logger.info(f"デフォルトフォントを使用: {default_font_path}")
+                else:
+                    logger.warning("フォントファイルが見つかりません。システムデフォルトフォントを使用します。")
+                    self.font_path = None
         except Exception as e:
-            logger.warning(f"カスタムフォント読み込みエラー: {e}")
-            self.font = None
+            logger.error(f"フォント初期化エラー: {e}")
+            self.font_path = None
     
-    def add_watermark(self, image, text="Generated with SD3.5", position="bottom-right", opacity=0.5):
+    def add_watermark(self, image_path, text, opacity=0.3, position="bottom-right", output_path=None):
         """画像にウォーターマークを追加する
         
         Args:
-            image: PIL.Imageまたはnumpy.ndarray形式の画像
-            text (str, optional): ウォーターマークテキスト。デフォルトは "Generated with SD3.5"
+            image_path (str or Path): 入力画像のパス
+            text (str): ウォーターマークのテキスト
+            opacity (float, optional): 不透明度（0.0〜1.0）。デフォルトは0.3。
             position (str, optional): ウォーターマークの位置。
-                "top-left", "top-right", "bottom-left", "bottom-right" のいずれか。
-                デフォルトは "bottom-right"
-            opacity (float, optional): ウォーターマークの不透明度（0.0〜1.0）。デフォルトは0.5
+                "top-left", "top-right", "bottom-left", "bottom-right", "center"から選択。
+                デフォルトは"bottom-right"。
+            output_path (str or Path, optional): 出力画像のパス。
+                指定がない場合は入力画像のパスに "_watermarked" を付加。
         
         Returns:
-            PIL.Image: ウォーターマークが追加された画像
+            Path: ウォーターマークを追加した画像のパス。失敗時はNone。
         """
-        if image is None:
-            logger.warning("ウォーターマークを追加する画像がNoneです")
-            return None
-        
-        # NumPy配列の場合はPILイメージに変換
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # 画像オブジェクトでない場合はそのまま返す
-        if not isinstance(image, Image.Image):
-            logger.warning(f"サポートされていない画像タイプです: {type(image)}")
-            return image
-        
         try:
-            # 元の画像をコピー
-            watermarked = image.copy()
+            # パスをPathオブジェクトに変換
+            image_path = Path(image_path)
             
-            # アルファチャンネルがない場合は追加
-            if watermarked.mode != 'RGBA':
-                watermarked = watermarked.convert('RGBA')
+            # 入力画像が存在するか確認
+            if not image_path.exists():
+                logger.error(f"入力画像が見つかりません: {image_path}")
+                return None
             
-            # ウォーターマーク用のオーバーレイ画像
-            overlay = Image.new('RGBA', watermarked.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(overlay)
-            
-            # フォントサイズを画像サイズに応じて調整
-            font_size = max(int(min(watermarked.width, watermarked.height) * 0.03), 12)
-            
-            # フォントの取得（カスタムフォントがない場合はデフォルトフォント）
-            if self.font:
-                font = ImageFont.truetype(self.font_path, font_size)
+            # 出力パスが指定されていない場合は自動生成
+            if output_path is None:
+                output_path = image_path.parent / f"{image_path.stem}_watermarked{image_path.suffix}"
             else:
-                # デフォルトフォント（サイズのみ指定）
-                font = ImageFont.load_default()
+                output_path = Path(output_path)
             
-            # テキストサイズの取得
-            text_bbox = draw.textbbox((0, 0), text, font=font)
-            text_width = text_bbox[2] - text_bbox[0]
-            text_height = text_bbox[3] - text_bbox[1]
+            # 画像を読み込み
+            with Image.open(image_path) as img:
+                # RGBAモードに変換
+                if img.mode != "RGBA":
+                    img = img.convert("RGBA")
+                
+                # ウォーターマーク用の透明レイヤーを作成
+                watermark = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                draw = ImageDraw.Draw(watermark)
+                
+                # フォントサイズを画像サイズに応じて調整
+                font_size = min(img.width, img.height) // 20
+                try:
+                    if self.font_path:
+                        font = ImageFont.truetype(self.font_path, font_size)
+                    else:
+                        font = ImageFont.load_default()
+                except Exception as e:
+                    logger.warning(f"フォント読み込みエラー: {e}")
+                    font = ImageFont.load_default()
+                
+                # テキストサイズを取得
+                text_bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = text_bbox[2] - text_bbox[0]
+                text_height = text_bbox[3] - text_bbox[1]
+                
+                # テキスト位置を計算
+                padding = 20
+                if position == "top-left":
+                    pos = (padding, padding)
+                elif position == "top-right":
+                    pos = (img.width - text_width - padding, padding)
+                elif position == "bottom-left":
+                    pos = (padding, img.height - text_height - padding)
+                elif position == "bottom-right":
+                    pos = (img.width - text_width - padding, img.height - text_height - padding)
+                else:  # center
+                    pos = ((img.width - text_width) // 2, (img.height - text_height) // 2)
+                
+                # テキストを描画
+                draw.text(pos, text, font=font, fill=(255, 255, 255, int(255 * opacity)))
+                
+                # 画像とウォーターマークを合成
+                result = Image.alpha_composite(img, watermark)
+                
+                # 画像を保存
+                result.save(output_path)
             
-            # テキスト位置の計算
-            padding = int(font_size * 0.5)  # パディング
-            
-            if position == "top-left":
-                text_position = (padding, padding)
-            elif position == "top-right":
-                text_position = (watermarked.width - text_width - padding, padding)
-            elif position == "bottom-left":
-                text_position = (padding, watermarked.height - text_height - padding)
-            else:  # "bottom-right" または他の値の場合
-                text_position = (watermarked.width - text_width - padding, 
-                                 watermarked.height - text_height - padding)
-            
-            # テキストの描画（半透明の背景付き）
-            bg_padding = int(font_size * 0.2)
-            bg_opacity = int(opacity * 128)  # 背景の不透明度（テキストの半分）
-            
-            # 背景の矩形
-            bg_bbox = (
-                text_position[0] - bg_padding,
-                text_position[1] - bg_padding,
-                text_position[0] + text_width + bg_padding,
-                text_position[1] + text_height + bg_padding
-            )
-            
-            # 背景を描画
-            draw.rectangle(bg_bbox, fill=(0, 0, 0, bg_opacity))
-            
-            # テキストを描画
-            draw.text(text_position, text, font=font, fill=(255, 255, 255, int(opacity * 255)))
-            
-            # オーバーレイを元画像と合成
-            watermarked = Image.alpha_composite(watermarked, overlay)
-            
-            # 元の画像形式に戻す
-            if image.mode != 'RGBA':
-                watermarked = watermarked.convert(image.mode)
-            
-            return watermarked
+            logger.info(f"ウォーターマークを追加しました: {output_path}")
+            return output_path
+        
         except Exception as e:
             logger.error(f"ウォーターマーク追加エラー: {e}")
-            return image
+            return None
     
-    def get_available_positions(self):
-        """利用可能なウォーターマーク位置の一覧を取得する
+    def batch_add_watermark(self, input_dir, text, opacity=0.3, position="bottom-right", output_dir=None):
+        """ディレクトリ内の画像に一括でウォーターマークを追加する
+        
+        Args:
+            input_dir (str or Path): 入力画像のディレクトリ
+            text (str): ウォーターマークのテキスト
+            opacity (float, optional): 不透明度（0.0〜1.0）。デフォルトは0.3。
+            position (str, optional): ウォーターマークの位置。デフォルトは"bottom-right"。
+            output_dir (str or Path, optional): 出力先ディレクトリ。
+                指定がない場合は入力ディレクトリに "_watermarked" を付加。
         
         Returns:
-            list: 利用可能なウォーターマーク位置のリスト
+            list: ウォーターマークを追加した画像のパスのリスト
         """
-        return ["top-left", "top-right", "bottom-left", "bottom-right"] 
+        # パスをPathオブジェクトに変換
+        input_dir = Path(input_dir)
+        
+        # 入力ディレクトリが存在するか確認
+        if not input_dir.exists():
+            logger.error(f"入力ディレクトリが見つかりません: {input_dir}")
+            return []
+        
+        # 出力ディレクトリが指定されていない場合は自動生成
+        if output_dir is None:
+            output_dir = input_dir.parent / f"{input_dir.name}_watermarked"
+        else:
+            output_dir = Path(output_dir)
+        
+        # 出力ディレクトリを作成
+        output_dir.mkdir(exist_ok=True)
+        
+        # ウォーターマークを追加した画像のパスを格納するリスト
+        watermarked_paths = []
+        
+        # 画像ファイルを検索してウォーターマークを追加
+        for file in input_dir.glob("*"):
+            if file.suffix.lower() in [".png", ".jpg", ".jpeg"]:
+                output_path = output_dir / f"{file.stem}_watermarked{file.suffix}"
+                result = self.add_watermark(file, text, opacity, position, output_path)
+                if result:
+                    watermarked_paths.append(result)
+        
+        return watermarked_paths
+    
+    def get_supported_positions(self):
+        """サポートしているウォーターマーク位置のリストを取得する
+        
+        Returns:
+            list: サポートしているウォーターマーク位置のリスト
+        """
+        return ["top-left", "top-right", "bottom-left", "bottom-right", "center"]
+    
+    def get_supported_formats(self):
+        """サポートしている画像フォーマットのリストを取得する
+        
+        Returns:
+            list: サポートしている画像フォーマットの拡張子リスト
+        """
+        return [".png", ".jpg", ".jpeg"] 
