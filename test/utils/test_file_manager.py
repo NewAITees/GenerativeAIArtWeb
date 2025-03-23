@@ -304,14 +304,18 @@ class TestFileManager:
     
     def test_save_image_invalid(self):
         """無効な画像オブジェクトの保存テスト"""
-        with patch('os.path.exists', return_value=True), \
+        with patch('pathlib.Path.exists', return_value=True), \
              patch('os.makedirs') as mock_makedirs, \
              patch('os.chmod') as mock_chmod, \
              patch('os.stat') as mock_stat:
             
+            # 基本的なモックの設定
             mock_stat.return_value.st_mode = 0o755
+            
+            # FileManagerのインスタンス化
             manager = FileManager()
             
+            # 無効な画像オブジェクトでのテスト
             invalid_image = "not an image object"
             with pytest.raises(AttributeError):
                 manager.save_image(invalid_image, "test")
