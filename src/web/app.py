@@ -6,6 +6,9 @@ import gradio as gr
 import logging
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Union, Any, cast
+from src.models.web import GenerationRequest, GenerationResponse, UpscaleRequest, UIState
+from src.models.settings import AppSettings, ImageGenerationSettings
 
 # プロジェクトのルートディレクトリをPYTHONPATHに追加
 project_root = Path(__file__).parent.parent.parent.absolute()
@@ -82,44 +85,82 @@ class GradioInterface:
             logger.error(f"モデル読み込みエラー: {e}")
             return f"Error: モデル読み込み中にエラーが発生しました: {e}"
     
-    def generate_image(self, prompt, model_path, steps, cfg_scale, sampler, width, height, seed):
+    def generate_image(
+        self, 
+        prompt: str, 
+        model_path: str, 
+        steps: int, 
+        cfg_scale: float, 
+        sampler: str, 
+        width: int, 
+        height: int, 
+        seed: Optional[int]
+    ) -> Tuple[Optional[Any], str]:
         """画像生成を実行する"""
         try:
+            # リクエストをpydanticモデルに変換して検証
+            request = GenerationRequest(
+                prompt=prompt,
+                model_path=model_path,
+                settings=ImageGenerationSettings(
+                    steps=steps,
+                    cfg_scale=cfg_scale,
+                    sampler=sampler,
+                    width=width,
+                    height=height,
+                    seed=seed
+                )
+            )
+            
             # モデルが読み込まれていない場合は読み込む
             if not self.model_loaded or self.inferencer is None:
-                load_result = self.load_model(model_path)
+                load_result = self.load_model(request.model_path)
                 if load_result.startswith("Error"):
                     return None, load_result
             
-            # パラメータの型変換
-            steps = int(steps)
-            cfg_scale = float(cfg_scale)
-            width = int(width)
-            height = int(height)
-            seed = int(seed) if seed else None
-            
-            logger.info(f"画像生成開始: prompt='{prompt}', steps={steps}, cfg_scale={cfg_scale}")
+            logger.info(f"画像生成開始: prompt='{request.prompt}', steps={request.settings.steps}, cfg_scale={request.settings.cfg_scale}")
             
             # 画像生成実行
             images = self.inferencer.run_inference(
-                prompt=prompt,
-                steps=steps,
-                cfg_scale=cfg_scale,
-                sampler=sampler,
-                width=width,
-                height=height,
-                seed=seed
+                prompt=request.prompt,
+                steps=request.settings.steps,
+                cfg_scale=request.settings.cfg_scale,
+                sampler=request.settings.sampler,
+                width=request.settings.width,
+                height=request.settings.height,
+                seed=request.settings.seed
             )
             
             # 画像を保存
             save_path = self.outputs_dir / f"gradio_output_{os.urandom(4).hex()}.png"
             self.save_image(images[0], str(save_path))
             
-            return images[0], f"画像を生成しました: {prompt}"
+            # レスポンスを構築
+            response = GenerationResponse(
+                success=True,
+                message=f"画像を生成しました: {request.prompt}",
+                image_path=str(save_path),
+                metadata={
+                    "prompt": request.prompt,
+                    "steps": request.settings.steps,
+                    "cfg_scale": request.settings.cfg_scale,
+                    "sampler": request.settings.sampler,
+                    "width": request.settings.width,
+                    "height": request.settings.height,
+                    "seed": request.settings.seed
+                }
+            )
+            
+            return images[0], response.message
             
         except Exception as e:
             logger.error(f"画像生成エラー: {e}")
-            return None, f"Error: 画像生成中にエラーが発生しました: {e}"
+            response = GenerationResponse(
+                success=False,
+                message=f"Error: 画像生成中にエラーが発生しました",
+                error=str(e)
+            )
+            return None, response.message
 
     def save_image(self, image, path):
         """画像を保存する"""

@@ -9,6 +9,9 @@ import json
 import logging
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, Optional, Any, Union, List
+
+from src.models.settings import AppSettings, ImageGenerationSettings
 
 # ロギング設定
 logger = logging.getLogger(__name__)
@@ -32,7 +35,7 @@ class SettingsManager:
         # 設定ディレクトリが存在しない場合は作成
         self.settings_dir.mkdir(exist_ok=True)
     
-    def save_profile(self, profile_name, settings):
+    def save_profile(self, profile_name: str, settings: Dict[str, Any]) -> bool:
         """設定プロファイルを保存する
         
         Args:
@@ -43,12 +46,15 @@ class SettingsManager:
             bool: 保存成功時はTrue、失敗時はFalse
         """
         try:
+            # 設定をpydanticモデルに変換して検証
+            app_settings = AppSettings.model_validate(settings)
+            
             # 設定ファイルのパスを作成
             profile_path = self.settings_dir / f"{profile_name}.json"
             
             # 設定を保存
             with open(str(profile_path), "w", encoding="utf-8") as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
+                json.dump(app_settings.model_dump(), f, ensure_ascii=False, indent=2)
             
             logger.info(f"設定プロファイルを保存しました: {profile_path}")
             return True
@@ -56,7 +62,7 @@ class SettingsManager:
             logger.error(f"設定プロファイル保存エラー: {e}")
             return False
     
-    def load_profile(self, profile_name):
+    def load_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
         """設定プロファイルを読み込む
         
         Args:
@@ -75,10 +81,14 @@ class SettingsManager:
         
         try:
             # プロファイルの読み込み
-            with open(profile_path, "r", encoding="utf-8") as f:
-                settings = json.load(f)
+            with open(str(profile_path), "r", encoding="utf-8") as f:
+                settings_dict = json.load(f)
             
-            return settings
+            # pydanticモデルで検証
+            app_settings = AppSettings.model_validate(settings_dict)
+            
+            # 辞書として返す
+            return app_settings.model_dump()
         except Exception as e:
             logger.error(f"設定プロファイル読み込みエラー: {e}")
             return None
@@ -128,28 +138,15 @@ class SettingsManager:
             logger.error(f"設定プロファイル削除エラー: {e}")
             return False
     
-    def get_default_settings(self):
+    def get_default_settings(self) -> Dict[str, Any]:
         """デフォルト設定を取得する
         
         Returns:
             dict: デフォルト設定
         """
-        # アプリケーションのデフォルト設定
-        return {
-            "prompt": "",
-            "steps": 40,
-            "cfg_scale": 4.5,
-            "sampler": "euler",
-            "width": 1024,
-            "height": 1024,
-            "seed": None,
-            "upscale": 1.0,
-            "watermark": False,
-            "watermark_text": "Generated with SD3.5",
-            "watermark_opacity": 0.3,
-            "save_directory": "outputs",
-            "save_format": "{prompt}_{date}"
-        }
+        # pydanticモデルのデフォルト値を使用
+        default_settings = AppSettings()
+        return default_settings.model_dump()
     
     def update_profile(self, profile_name, updates, base_settings=None):
         """既存のプロファイルを更新する

@@ -275,3 +275,92 @@ poetry run python -m pytest -xvs test/generator/test_sd3_inf.py::TestSD3Inferenc
 - Stability AI - SD3.5モデルの開発
 - Google - T5モデルの開発
 - OpenAI - CLIPモデルの開発
+
+## データバリデーションと型チェック
+
+このプロジェクトはデータバリデーションと型チェックに以下を使用しています：
+
+- **pydantic v2**: リクエスト、設定、モデルデータの検証
+- **mypy**: 静的型チェック
+
+### mypy型チェックの実行
+
+```bash
+poetry run mypy src
+```
+
+### pydanticモデルの使用
+
+主なpydanticモデルは`src/models/`ディレクトリで定義されています：
+
+- `base.py`: 基本モデル定義
+- `settings.py`: アプリケーション設定モデル
+- `file_manager.py`: ファイル管理モデル
+- `web.py`: Webアプリケーションモデル
+
+### 型チェックとバリデーションの利点
+
+1. **早期のバグ発見**
+   - 実行前に型の問題を発見
+   - データバリデーションによる不正な値の防止
+
+2. **自己文書化されたコード**
+   - 型ヒントによる明確なインターフェース
+   - pydanticモデルの`Field`説明による詳細なドキュメント
+
+3. **IDE補完の強化**
+   - より正確なコード補完
+   - 型関連のエラーをリアルタイムで表示
+
+4. **堅牢性の向上**
+   - 実行時の型エラーを防止
+   - データの整合性を保証
+
+### 使用例
+
+設定の読み込みと検証：
+
+```python
+from src.models.settings import AppSettings
+
+# 設定をロード
+settings_dict = load_settings_from_file()
+app_settings = AppSettings.model_validate(settings_dict)
+
+# 型安全な設定へのアクセス
+steps = app_settings.generation.steps  # int型が保証される
+cfg_scale = app_settings.generation.cfg_scale  # float型が保証される
+```
+
+ファイル名の生成：
+
+```python
+from src.models.file_manager import FilenameConfig, FileExtension
+
+# 設定を作成
+config = FilenameConfig(
+    prefix="generated",
+    include_date=True,
+    extension=FileExtension.PNG
+)
+
+# ファイル名を生成
+filename = file_manager.generate_filename("my prompt", config)
+```
+
+### 開発者向けガイド
+
+1. 新しいモデルの追加
+   - `src/models/`に新しいモデルファイルを作成
+   - 適切な型ヒントとバリデーションを定義
+   - テストを追加
+
+2. 既存コードの型チェック
+   - `mypy.ini`で段階的な型チェックを設定
+   - `poetry run mypy src`で型チェックを実行
+   - エラーを修正
+
+3. バリデーションの追加
+   - pydanticの`Field`でバリデーションルールを定義
+   - カスタムバリデータを使用して複雑なルールを実装
+   - エラーメッセージをカスタマイズ
