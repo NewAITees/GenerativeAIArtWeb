@@ -4,6 +4,7 @@ import json
 import argparse
 import gradio as gr
 import logging
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union, Any, cast
@@ -60,6 +61,11 @@ class GradioInterface:
         if FileManager:
             self.file_manager = FileManager(self.outputs_dir)
         
+        # 進捗コールバック用の状態管理
+        self.current_task = None
+        self.task_progress = 0
+        self.task_total = 0
+    
     def _get_model_paths(self):
         """モデルディレクトリから利用可能なモデルファイル一覧を取得"""
         model_files = []
@@ -71,21 +77,31 @@ class GradioInterface:
                     
         return model_files or ["models/sd3.5_large.safetensors"]
     
-    def load_model(self, model_path):
-        """モデルを読み込む"""
+    async def load_model(self, model_path):
+        """モデルを非同期に読み込む"""
         try:
             if not os.path.exists(model_path):
                 return f"Error: モデルファイル '{model_path}' が見つかりません"
             
             logger.info(f"モデルを読み込み中: {model_path}")
-            self.inferencer = SD3Inferencer(model_path)
+            
+            # モデル読み込みを別スレッドで実行
+            self.inferencer = await asyncio.to_thread(
+                lambda: SD3Inferencer(model_path)
+            )
             self.model_loaded = True
             return f"モデル '{os.path.basename(model_path)}' を読み込みました"
         except Exception as e:
             logger.error(f"モデル読み込みエラー: {e}")
             return f"Error: モデル読み込み中にエラーが発生しました: {e}"
     
-    def generate_image(
+    def update_progress(self, current: int, total: int):
+        """進捗状況を更新する"""
+        self.task_progress = current
+        self.task_total = total
+        return current / total
+    
+    async def generate_image(
         self, 
         prompt: str, 
         model_path: str, 
@@ -94,9 +110,10 @@ class GradioInterface:
         sampler: str, 
         width: int, 
         height: int, 
-        seed: Optional[int]
+        seed: Optional[int],
+        progress=gr.Progress()
     ) -> Tuple[Optional[Any], str]:
-        """画像生成を実行する"""
+        """画像生成を非同期に実行する"""
         try:
             # リクエストをpydanticモデルに変換して検証
             request = GenerationRequest(
@@ -114,26 +131,35 @@ class GradioInterface:
             
             # モデルが読み込まれていない場合は読み込む
             if not self.model_loaded or self.inferencer is None:
-                load_result = self.load_model(request.model_path)
+                load_result = await self.load_model(request.model_path)
                 if load_result.startswith("Error"):
                     return None, load_result
             
             logger.info(f"画像生成開始: prompt='{request.prompt}', steps={request.settings.steps}, cfg_scale={request.settings.cfg_scale}")
             
-            # 画像生成実行
-            images = self.inferencer.run_inference(
-                prompt=request.prompt,
-                steps=request.settings.steps,
-                cfg_scale=request.settings.cfg_scale,
-                sampler=request.settings.sampler,
-                width=request.settings.width,
-                height=request.settings.height,
-                seed=request.settings.seed
-            )
+            # 画像生成実行（進捗表示付き）
+            def generation_task():
+                return self.inferencer.run_inference(
+                    prompt=request.prompt,
+                    steps=request.settings.steps,
+                    cfg_scale=request.settings.cfg_scale,
+                    sampler=request.settings.sampler,
+                    width=request.settings.width,
+                    height=request.settings.height,
+                    seed=request.settings.seed,
+                    progress_callback=self.update_progress
+                )
+            
+            # 進捗表示を初期化
+            self.task_progress = 0
+            self.task_total = request.settings.steps
+            
+            # 画像生成を別スレッドで実行
+            images = await asyncio.to_thread(generation_task)
             
             # 画像を保存
             save_path = self.outputs_dir / f"gradio_output_{os.urandom(4).hex()}.png"
-            self.save_image(images[0], str(save_path))
+            await asyncio.to_thread(self.save_image, images[0], str(save_path))
             
             # レスポンスを構築
             response = GenerationResponse(
@@ -275,38 +301,44 @@ class GradioInterface:
             logger.error(f"プロンプト要素読み込みエラー: {e}")
             return {}
     
-    def upscale_image(self, image, scale=2.0):
-        """画像をアップスケールする"""
+    async def upscale_image(self, image, scale=2.0):
+        """画像を非同期にアップスケールする"""
         if not Upscaler:
             logger.warning("Upscaler モジュールが利用できません")
             return image
         
         try:
             upscaler = Upscaler()
-            return upscaler.upscale(image, scale=scale)
+            return await asyncio.to_thread(upscaler.upscale, image, scale=scale)
         except Exception as e:
             logger.error(f"アップスケールエラー: {e}")
             return image
     
-    def add_watermark(self, image, text="Generated with SD3.5", position="bottom-right", opacity=0.5):
-        """画像にウォーターマークを追加する"""
+    async def add_watermark(self, image, text="Generated with SD3.5", position="bottom-right", opacity=0.5):
+        """画像に非同期にウォーターマークを追加する"""
         if not Watermarker:
             logger.warning("Watermarker モジュールが利用できません")
             return image
         
         try:
             processor = Watermarker()
-            return processor.add_watermark(image, text=text, position=position, opacity=opacity)
+            return await asyncio.to_thread(
+                processor.add_watermark,
+                image,
+                text=text,
+                position=position,
+                opacity=opacity
+            )
         except Exception as e:
             logger.error(f"ウォーターマーク追加エラー: {e}")
             return image
     
-    def save_image_custom(self, image, directory=None, filename_pattern=None, metadata=None):
-        """カスタムファイル保存を実行する"""
+    async def save_image_custom(self, image, directory=None, filename_pattern=None, metadata=None):
+        """カスタムファイル保存を非同期に実行する"""
         if not FileManager:
             logger.warning("FileManager モジュールが利用できません")
             save_path = self.outputs_dir / f"custom_{os.urandom(4).hex()}.png"
-            self.save_image(image, str(save_path))
+            await asyncio.to_thread(self.save_image, image, str(save_path))
             return str(save_path)
         
         try:
@@ -314,18 +346,18 @@ class GradioInterface:
                 metadata = {}
             
             # ファイルマネージャーのインスタンスを使用して画像を保存
-            result = self.file_manager.save_image(
+            result = await asyncio.to_thread(
+                self.file_manager.save_image,
                 image,
                 directory=directory,
                 filename_pattern=filename_pattern,
                 metadata=metadata
             )
-            # テスト対応のため、実際の戻り値を返す
             return result
         except Exception as e:
             logger.error(f"カスタムファイル保存エラー: {e}")
             save_path = self.outputs_dir / f"error_{os.urandom(4).hex()}.png"
-            self.save_image(image, str(save_path))
+            await asyncio.to_thread(self.save_image, image, str(save_path))
             return str(save_path)
     
     def get_save_directories(self):
@@ -557,7 +589,7 @@ class GradioInterface:
                         refresh_models_btn = gr.Button("モデル一覧更新")
                         refresh_dirs_btn = gr.Button("ディレクトリ一覧更新")
             
-            # イベントハンドラの設定
+            # イベントハンドラの設定（非同期対応）
             load_model_btn.click(
                 fn=self.load_model,
                 inputs=[model_path],
@@ -567,7 +599,8 @@ class GradioInterface:
             generate_btn.click(
                 fn=self.generate_image,
                 inputs=[prompt, model_path, steps, cfg_scale, sampler, width, height, seed],
-                outputs=[image_output, status_output]
+                outputs=[image_output, status_output],
+                show_progress="full"
             )
             
             # 設定保存/読み込み
@@ -647,31 +680,26 @@ class GradioInterface:
                 outputs=[prompt]
             )
             
-            # 画像処理
+            # 画像処理（非同期対応）
             upscale_btn.click(
-                fn=lambda img, scale: (
-                    self.upscale_image(img, float(scale)),
-                    f"画像をアップスケールしました (x{scale})"
-                ),
+                fn=self.upscale_image,
                 inputs=[image_output, upscale_factor],
-                outputs=[image_output, status_output]
+                outputs=[image_output, status_output],
+                show_progress="full"
             )
             
             add_watermark_btn.click(
-                fn=lambda img, text, pos, opacity: (
-                    self.add_watermark(img, text, pos, opacity),
-                    f"ウォーターマークを追加しました"
-                ),
+                fn=self.add_watermark,
                 inputs=[image_output, watermark_text, watermark_position, watermark_opacity],
-                outputs=[image_output, status_output]
+                outputs=[image_output, status_output],
+                show_progress="full"
             )
             
             custom_save_btn.click(
-                fn=lambda img, dir, pattern, p: (
-                    f"画像を保存しました: {self.save_image_custom(img, dir, pattern, {'prompt': p})}"
-                ),
+                fn=self.save_image_custom,
                 inputs=[image_output, save_directory, filename_pattern, prompt],
-                outputs=[status_output]
+                outputs=[status_output],
+                show_progress="full"
             )
             
             # 設定更新

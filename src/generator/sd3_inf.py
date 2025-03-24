@@ -11,6 +11,7 @@ import math
 import os
 import pickle
 import re
+from typing import List, Optional
 
 import fire
 import numpy as np
@@ -355,6 +356,7 @@ class SD3Inferencer:
         controlnet_cond=None,
         denoise=1.0,
         skip_layer_config={},
+        progress_callback=None
     ) -> torch.Tensor:
         self.print("Sampling...")
         latent = latent.half().cuda()
@@ -384,6 +386,7 @@ class SD3Inferencer:
             noise_scaled,
             sigmas,
             extra_args=extra_args,
+            progress_callback=progress_callback
         )
         latent = SD3LatentFormat().process_out(latent)
         self.sd3.model = self.sd3.model.cpu()
@@ -503,6 +506,65 @@ class SD3Inferencer:
             self.print(f"Saving to to {save_path}")
             image.save(save_path)
             self.print("Done")
+
+    def run_inference(
+        self,
+        prompt: str,
+        steps: int = 40,
+        cfg_scale: float = 4.5,
+        sampler: str = "euler",
+        width: int = 1024,
+        height: int = 1024,
+        seed: Optional[int] = None,
+        progress_callback=None
+    ) -> List[Image.Image]:
+        """画像生成の推論を実行する
+        
+        Args:
+            prompt (str): 生成プロンプト
+            steps (int, optional): サンプリングステップ数. デフォルトは40.
+            cfg_scale (float, optional): CFGスケール. デフォルトは4.5.
+            sampler (str, optional): サンプラー名. デフォルトは"euler".
+            width (int, optional): 画像の幅. デフォルトは1024.
+            height (int, optional): 画像の高さ. デフォルトは1024.
+            seed (int, optional): 乱数シード. デフォルトはNone（ランダム）.
+            progress_callback (callable, optional): 進捗コールバック関数 (step, total_steps) を引数に取る. デフォルトはNone.
+        
+        Returns:
+            List[Image.Image]: 生成された画像のリスト
+        """
+        # シードの設定
+        if seed is None:
+            seed = torch.randint(0, 2**32, (1,)).item()
+        
+        logger.info(f"画像生成開始: prompt='{prompt}', steps={steps}, cfg_scale={cfg_scale}, seed={seed}")
+        
+        # 空の条件付け
+        uncond, uncond_pooled = self.get_cond("")
+        
+        # プロンプトの条件付け
+        cond, pooled = self.get_cond(prompt)
+        
+        # 潜在表現の初期化
+        latent = self.get_empty_latent(1, width, height, seed)
+        
+        # サンプリング
+        # ここで、do_sampling関数に進捗コールバックを渡す
+        result = self.do_sampling(
+            latent=latent,
+            cond=cond,
+            uncond=uncond,
+            steps=steps,
+            cfg_scale=cfg_scale,
+            sampler=sampler,
+            seed=seed,
+            progress_callback=progress_callback
+        )
+        
+        # VAEデコード
+        image = self.vae_decode(result)
+        
+        return [image]
 
 
 CONFIGS = {

@@ -334,41 +334,75 @@ def to_d(x, sigma, denoised):
 
 @torch.no_grad()
 @torch.autocast("cuda", dtype=torch.float16)
-def sample_euler(model, x, sigmas, extra_args=None):
-    """Implements Algorithm 2 (Euler steps) from Karras et al. (2022)."""
+def sample_euler(model, x, sigmas, extra_args=None, callback=None, disable=None):
+    """オイラー法によるサンプリングを実行する
+    
+    Args:
+        model: デノイザーモデル
+        x: 入力テンソル
+        sigmas: ノイズレベルのスケジュール
+        extra_args: モデルに渡す追加の引数
+        callback: 進捗コールバック関数
+        disable: tqdmの無効化フラグ
+    
+    Returns:
+        torch.Tensor: サンプリング結果
+    """
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones([x.shape[0]])
-    for i in tqdm(range(len(sigmas) - 1)):
-        sigma_hat = sigmas[i]
-        denoised = model(x, sigma_hat * s_in, **extra_args)
-        d = to_d(x, sigma_hat, denoised)
-        dt = sigmas[i + 1] - sigma_hat
-        # Euler method
+    
+    for i in tqdm(range(len(sigmas) - 1), disable=disable):
+        denoised = model(x, sigmas[i] * s_in, step=i, total_steps=len(sigmas) - 1, **extra_args)
+        d = (x - denoised) / sigmas[i]
+        dt = sigmas[i + 1] - sigmas[i]
         x = x + d * dt
+        
+        # 進捗コールバックを呼び出す
+        if callback is not None:
+            callback(i, len(sigmas) - 1)
+    
     return x
 
 
 @torch.no_grad()
 @torch.autocast("cuda", dtype=torch.float16)
-def sample_dpmpp_2m(model, x, sigmas, extra_args=None):
-    """DPM-Solver++(2M)."""
+def sample_dpmpp_2m(model, x, sigmas, extra_args=None, callback=None, disable=None):
+    """DPM-Solver++ (2M) によるサンプリングを実行する
+    
+    Args:
+        model: デノイザーモデル
+        x: 入力テンソル
+        sigmas: ノイズレベルのスケジュール
+        extra_args: モデルに渡す追加の引数
+        callback: 進捗コールバック関数
+        disable: tqdmの無効化フラグ
+    
+    Returns:
+        torch.Tensor: サンプリング結果
+    """
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones([x.shape[0]])
-    sigma_fn = lambda t: t.neg().exp()
-    t_fn = lambda sigma: sigma.log().neg()
     old_denoised = None
-    for i in tqdm(range(len(sigmas) - 1)):
-        denoised = model(x, sigmas[i] * s_in, **extra_args)
-        t, t_next = t_fn(sigmas[i]), t_fn(sigmas[i + 1])
-        h = t_next - t
-        if old_denoised is None or sigmas[i + 1] == 0:
-            x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised
+    
+    for i in tqdm(range(len(sigmas) - 1), disable=disable):
+        denoised = model(x, sigmas[i] * s_in, step=i, total_steps=len(sigmas) - 1, **extra_args)
+        if old_denoised is None:
+            d = (x - denoised) / sigmas[i]
+            dt = sigmas[i + 1] - sigmas[i]
+            x = x + d * dt
         else:
-            h_last = t - t_fn(sigmas[i - 1])
-            r = h_last / h
-            denoised_d = (1 + 1 / (2 * r)) * denoised - (1 / (2 * r)) * old_denoised
-            x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised_d
+            h = sigmas[i + 1] - sigmas[i]
+            s = h * sigmas[i + 1] / (sigmas[i] * (h + sigmas[i]))
+            x_d = (x - s * sigmas[i + 1] * denoised) / (1 - s)
+            d = (x - denoised) / sigmas[i]
+            dt = sigmas[i + 1] - sigmas[i]
+            x = x + d * dt
         old_denoised = denoised
+        
+        # 進捗コールバックを呼び出す
+        if callback is not None:
+            callback(i, len(sigmas) - 1)
+    
     return x
 
 
