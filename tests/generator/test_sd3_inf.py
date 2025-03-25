@@ -17,7 +17,7 @@ sys.modules['sd3_impls'] = mock.MagicMock()
 sys.modules['other_impls'] = mock.MagicMock()
 
 # テスト対象のモジュールをインポート
-from generator.sd3_inf import SD3Inferencer, SD3, VAE
+from generator.sd3_inf import SD3Inferencer, SD3, VAE, CFGDenoiser
 
 # テスト設定
 MODEL_FOLDER = "/home/persona/Tempdata/HuggingFace"
@@ -256,3 +256,140 @@ class TestSD3InferencerIntegration:
         # テスト後のクリーンアップ
         # for file in Path(out_dir).glob("*.png"):
         #    file.unlink()  # コメントアウトして画像を保持 
+
+@pytest.fixture
+def mock_model():
+    return mock.MagicMock()
+
+@pytest.fixture
+def mock_tokenizer():
+    return mock.MagicMock()
+
+@pytest.fixture
+def mock_vae():
+    return mock.MagicMock()
+
+@pytest.fixture
+def inferencer(mock_model, mock_tokenizer, mock_vae):
+    with mock.patch('generator.sd3_inf.load_model') as mock_load_model, \
+         mock.patch('generator.sd3_inf.load_tokenizer') as mock_load_tokenizer, \
+         mock.patch('generator.sd3_inf.load_vae') as mock_load_vae:
+        mock_load_model.return_value = mock_model
+        mock_load_tokenizer.return_value = mock_tokenizer
+        mock_load_vae.return_value = mock_vae
+        return SD3Inferencer("test_model.safetensors")
+
+@pytest.mark.asyncio
+async def test_run_inference_with_progress(inferencer, mock_model):
+    """進捗コールバック付きの推論実行テスト"""
+    # モックの設定
+    mock_model.return_value = torch.randn(1, 4, 64, 64)
+    progress_calls = []
+    
+    def progress_callback(current, total):
+        progress_calls.append((current, total))
+    
+    # 推論の実行
+    result = await inferencer.run_inference(
+        prompt="test prompt",
+        steps=10,
+        cfg_scale=4.5,
+        sampler="euler",
+        width=64,
+        height=64,
+        seed=42,
+        progress_callback=progress_callback
+    )
+    
+    # 結果の検証
+    assert result is not None
+    assert len(progress_calls) > 0  # プログレスコールバックが呼ばれたことを確認
+    assert progress_calls[-1][0] == progress_calls[-1][1]  # 最後のコールバックで完了していることを確認
+
+@pytest.mark.asyncio
+async def test_do_sampling_with_progress(inferencer, mock_model):
+    """サンプリング処理の進捗コールバックテスト"""
+    # モックの設定
+    mock_model.return_value = torch.randn(1, 4, 64, 64)
+    progress_calls = []
+    
+    def progress_callback(current, total):
+        progress_calls.append((current, total))
+    
+    # サンプリングの実行
+    result = await inferencer.do_sampling(
+        x=torch.randn(1, 4, 64, 64),
+        sigma=torch.tensor([1.0]),
+        steps=10,
+        sampler="euler",
+        progress_callback=progress_callback
+    )
+    
+    # 結果の検証
+    assert result is not None
+    assert len(progress_calls) > 0  # プログレスコールバックが呼ばれたことを確認
+
+def test_cfg_denoiser_progress():
+    """CFGDenoiserの進捗コールバックテスト"""
+    # モックの設定
+    mock_model = mock.MagicMock()
+    mock_model.return_value = torch.randn(1, 4, 64, 64)
+    progress_calls = []
+    
+    def progress_callback(current, total):
+        progress_calls.append((current, total))
+    
+    # CFGDenoiserの作成と実行
+    cfg_denoiser = CFGDenoiser(mock_model, progress_callback=progress_callback)
+    result = cfg_denoiser(torch.randn(1, 4, 64, 64), torch.tensor([1.0]))
+    
+    # 結果の検証
+    assert result is not None
+    assert len(progress_calls) > 0  # プログレスコールバックが呼ばれたことを確認
+
+@pytest.mark.asyncio
+async def test_concurrent_inference(inferencer, mock_model):
+    """複数の推論の同時実行テスト"""
+    # モックの設定
+    mock_model.return_value = torch.randn(1, 4, 64, 64)
+    
+    # 複数の推論を同時に実行
+    tasks = [
+        inferencer.run_inference(
+            prompt=f"test prompt {i}",
+            steps=10,
+            cfg_scale=4.5,
+            sampler="euler",
+            width=64,
+            height=64,
+            seed=42
+        )
+        for i in range(3)
+    ]
+    
+    # すべてのタスクが完了するまで待機
+    results = await asyncio.gather(*tasks)
+    
+    # 結果の検証
+    for result in results:
+        assert result is not None
+
+@pytest.mark.asyncio
+async def test_error_handling(inferencer, mock_model):
+    """エラーハンドリングのテスト"""
+    # エラーを発生させるモックの設定
+    mock_model.side_effect = Exception("Test error")
+    
+    # エラーが適切に処理されることを確認
+    with pytest.raises(Exception) as exc_info:
+        await inferencer.run_inference(
+            prompt="test prompt",
+            steps=10,
+            cfg_scale=4.5,
+            sampler="euler",
+            width=64,
+            height=64,
+            seed=42
+        )
+    
+    assert str(exc_info.value) == "Test error" 
