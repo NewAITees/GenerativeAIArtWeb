@@ -28,6 +28,10 @@ from sd3_impls import (
     SkipLayerCFGDenoiser,
 )
 from tqdm import tqdm
+import logging
+
+# ロガーの設定
+logger = logging.getLogger(__name__)
 
 #################################################################################################
 ### Wrappers for model parts
@@ -252,9 +256,22 @@ MODEL_FOLDER = "models"
 
 
 class SD3Inferencer:
+    """Stable Diffusion 3.5 推論エンジン"""
 
-    def __init__(self):
+    def __init__(self, model_path: Optional[str] = None):
+        """初期化
+        
+        Args:
+            model_path (Optional[str], optional): モデルファイルのパス. デフォルトはNone.
+        """
         self.verbose = False
+        self.model_path = model_path
+        self.tokenizer = None
+        self.t5xxl = None
+        self.clip_l = None
+        self.clip_g = None
+        self.sd3 = None
+        self.vae = None
 
     def print(self, txt):
         if self.verbose:
@@ -300,13 +317,13 @@ class SD3Inferencer:
         return latents
 
     def get_sigmas(self, sampling, steps):
-        start = sampling.timestep(sampling.sigma_max)
-        end = sampling.timestep(sampling.sigma_min)
+        start = float(sampling.sigma_max)
+        end = float(sampling.sigma_min)
         timesteps = torch.linspace(start, end, steps)
         sigs = []
         for x in range(len(timesteps)):
             ts = timesteps[x]
-            sigs.append(sampling.sigma(ts))
+            sigs.append(float(ts))
         sigs += [0.0]
         return torch.FloatTensor(sigs)
 
@@ -341,6 +358,13 @@ class SD3Inferencer:
         return math.isclose(max_sigma, sigma, rel_tol=1e-05) or sigma > max_sigma
 
     def fix_cond(self, cond):
+        if isinstance(cond, dict):
+            # 既に辞書形式の場合はそのまま返す
+            return {
+                "c_crossattn": cond["c_crossattn"].half().cuda(),
+                "y": cond["y"].half().cuda()
+            }
+        # タプル形式の場合は変換する
         cond, pooled = (cond[0].half().cuda(), cond[1].half().cuda())
         return {"c_crossattn": cond, "y": pooled}
 
@@ -358,6 +382,24 @@ class SD3Inferencer:
         skip_layer_config={},
         progress_callback=None
     ) -> torch.Tensor:
+        """サンプリングを実行する
+        
+        Args:
+            latent (torch.Tensor): 入力潜在表現
+            seed (int): 乱数シード
+            conditioning (tuple): 条件付け情報
+            neg_cond (tuple): 負の条件付け情報
+            steps (int): サンプリングステップ数
+            cfg_scale (float): CFGスケール
+            sampler (str, optional): サンプラー名. デフォルトは"dpmpp_2m"
+            controlnet_cond (torch.Tensor, optional): ControlNet条件. デフォルトはNone
+            denoise (float, optional): デノイズ率. デフォルトは1.0
+            skip_layer_config (dict, optional): スキップレイヤー設定. デフォルトは{}
+            progress_callback (callable, optional): 進捗コールバック関数. デフォルトはNone
+            
+        Returns:
+            torch.Tensor: 生成された潜在表現
+        """
         self.print("Sampling...")
         latent = latent.half().cuda()
         self.sd3.model = self.sd3.model.cuda()
@@ -376,18 +418,27 @@ class SD3Inferencer:
             sigmas[0], noise, latent, self.max_denoise(sigmas)
         )
         sample_fn = getattr(sd3_impls, f"sample_{sampler}")
+        
+        # カスタムコールバック関数を作成して、progress_callbackに中継
+        def wrapped_callback(i, total):
+            if progress_callback:
+                progress_callback(i, total)
+        
         denoiser = (
             SkipLayerCFGDenoiser
             if skip_layer_config.get("scale", 0) > 0
             else CFGDenoiser
         )
+        
+        # 進捗コールバックを渡す
         latent = sample_fn(
-            denoiser(self.sd3.model, steps, skip_layer_config),
+            denoiser(self.sd3.model, steps, skip_layer_config, progress_callback=wrapped_callback),
             noise_scaled,
             sigmas,
             extra_args=extra_args,
-            progress_callback=progress_callback
+            callback=wrapped_callback  # ここでコールバックを渡す
         )
+        
         latent = SD3LatentFormat().process_out(latent)
         self.sd3.model = self.sd3.model.cpu()
         self.print("Sampling done")
@@ -540,29 +591,31 @@ class SD3Inferencer:
         logger.info(f"画像生成開始: prompt='{prompt}', steps={steps}, cfg_scale={cfg_scale}, seed={seed}")
         
         # 空の条件付け
-        uncond, uncond_pooled = self.get_cond("")
+        neg_cond = self.get_cond("")
         
         # プロンプトの条件付け
-        cond, pooled = self.get_cond(prompt)
+        conditioning = self.get_cond(prompt)
         
         # 潜在表現の初期化
         latent = self.get_empty_latent(1, width, height, seed)
         
         # サンプリング
-        # ここで、do_sampling関数に進捗コールバックを渡す
-        result = self.do_sampling(
-            latent=latent,
-            cond=cond,
-            uncond=uncond,
-            steps=steps,
-            cfg_scale=cfg_scale,
-            sampler=sampler,
-            seed=seed,
+        sampled_latent = self.do_sampling(
+            latent,
+            seed,
+            conditioning,
+            neg_cond,
+            steps,
+            cfg_scale,
+            sampler,
+            None,  # controlnet_cond
+            1.0,   # denoise
+            {},    # skip_layer_config
             progress_callback=progress_callback
         )
         
         # VAEデコード
-        image = self.vae_decode(result)
+        image = self.vae_decode(sampled_latent)
         
         return [image]
 
@@ -665,7 +718,7 @@ def main(
         _cfg = cfg or controlnet_config.get("cfg", cfg)
         _sampler = sampler or controlnet_config.get("sampler", sampler)
 
-    inferencer = SD3Inferencer()
+    inferencer = SD3Inferencer(model)
 
     inferencer.load(
         model,
@@ -716,6 +769,113 @@ def main(
         denoise,
         skip_layer_config,
     )
+
+
+def load_model(model_path: str, shift: float = 3.0, controlnet_ckpt: Optional[str] = None, verbose: bool = False, device: str = "cuda") -> BaseModel:
+    """モデルをロードするヘルパー関数
+    
+    Args:
+        model_path (str): モデルファイルのパス
+        shift (float): シフト値、デフォルトは3.0
+        controlnet_ckpt (str, optional): ControlNetモデルのパス
+        verbose (bool): 詳細なログを出力するかどうか
+        device (str): 使用するデバイス
+        
+    Returns:
+        BaseModel: ロードされたSD3モデル
+    """
+    return SD3(model_path, shift, controlnet_ckpt, verbose, device).model
+
+def load_tokenizer() -> SD3Tokenizer:
+    """トークナイザーをロードするヘルパー関数
+    
+    Returns:
+        SD3Tokenizer: ロードされたトークナイザー
+    """
+    return SD3Tokenizer()
+
+def load_vae(model_path: str, dtype: torch.dtype = torch.float16) -> SDVAE:
+    """VAEモデルをロードするヘルパー関数
+    
+    Args:
+        model_path (str): モデルファイルのパス
+        dtype (torch.dtype): モデルのデータ型
+        
+    Returns:
+        SDVAE: ロードされたVAEモデル
+    """
+    return VAE(model_path, dtype).model
+
+
+class CFGDenoiser(torch.nn.Module):
+    """Helper for applying CFG Scaling to diffusion outputs with progress tracking"""
+
+    def __init__(self, model, steps=None, skip_layer_config=None, progress_callback=None):
+        """Initialize the CFG Denoiser
+        
+        Args:
+            model: The base model to use for denoising
+            steps (int, optional): Total number of steps. Defaults to None.
+            skip_layer_config (dict, optional): Configuration for layer skipping. Defaults to None.
+            progress_callback (callable, optional): Progress callback function. Defaults to None.
+        """
+        super().__init__()
+        self.model = model
+        self.steps = steps
+        self.skip_layer_config = skip_layer_config or {}
+        self.progress_callback = progress_callback
+        self.current_step = 0
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        sigma: torch.Tensor,
+        cond=None,
+        uncond=None,
+        cond_scale=None,
+        **kwargs
+    ) -> torch.Tensor:
+        """Forward pass with progress tracking
+        
+        Args:
+            x (torch.Tensor): Input tensor
+            sigma (torch.Tensor): Noise level
+            cond (dict, optional): Conditioning. Defaults to None.
+            uncond (dict, optional): Unconditioning. Defaults to None.
+            cond_scale (float, optional): Conditioning scale. Defaults to None.
+            **kwargs: Additional arguments
+            
+        Returns:
+            torch.Tensor: Denoised output
+        """
+        # Update progress
+        self.current_step += 1
+        if self.progress_callback is not None:
+            total_steps = self.steps or 1
+            self.progress_callback(self.current_step, total_steps)
+
+        # Handle unconditional case
+        if cond is None or uncond is None:
+            return self.model(x, sigma, **kwargs)
+
+        # Run conditional and unconditional in a batch
+        x_in = torch.cat([x] * 2)
+        sigma_in = torch.cat([sigma] * 2)
+        c_crossattn = torch.cat([cond["c_crossattn"], uncond["c_crossattn"]])
+        y = torch.cat([cond["y"], uncond["y"]])
+
+        # Apply model
+        out = self.model.apply_model(
+            x_in,
+            sigma_in,
+            c_crossattn=c_crossattn,
+            y=y,
+            **kwargs
+        )
+
+        # Split results and apply conditioning
+        out_cond, out_uncond = out.chunk(2)
+        return out_uncond + (out_cond - out_uncond) * cond_scale
 
 
 if __name__ == "__main__":
