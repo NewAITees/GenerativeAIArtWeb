@@ -16,5 +16,7 @@ poetry.lock
 *.safetensors
 *.safetensors.index.json
 
+.coverage
+
 # mypy
 .mypy_cache/
