@@ -62,12 +62,13 @@ class Watermarker:
             PIL.Image: ウォーターマークを追加した画像
         """
         try:
-            # RGBAモードに変換
-            if image.mode != "RGBA":
-                image = image.convert("RGBA")
+            # 画像をコピーしてRGBAモードに変換
+            img = image.copy()
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
             
             # ウォーターマーク用の透明レイヤーを作成
-            watermark = Image.new("RGBA", image.size, (0, 0, 0, 0))
+            watermark = Image.new("RGBA", img.size, (0, 0, 0, 0))
             draw = ImageDraw.Draw(watermark)
             
             # フォントを設定
@@ -80,7 +81,7 @@ class Watermarker:
             
             # テキスト位置を計算
             pos = self._calculate_position(
-                image.width, image.height,
+                img.size[0], img.size[1],
                 text_width, text_height,
                 position
             )
@@ -89,7 +90,8 @@ class Watermarker:
             draw.text(pos, text, font=font, fill=(*color, int(255 * opacity)))
             
             # 画像とウォーターマークを合成
-            return Image.alpha_composite(image, watermark)
+            result = Image.alpha_composite(img, watermark)
+            return result
             
         except Exception as e:
             logger.error(f"テキストウォーターマーク追加エラー: {e}")
@@ -109,9 +111,10 @@ class Watermarker:
             PIL.Image: ウォーターマークを追加した画像
         """
         try:
-            # RGBAモードに変換
-            if image.mode != "RGBA":
-                image = image.convert("RGBA")
+            # 画像をコピーしてRGBAモードに変換
+            img = image.copy()
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
             
             # ウォーターマーク画像を読み込み
             watermark_img = Image.open(watermark_image_path)
@@ -119,8 +122,8 @@ class Watermarker:
                 watermark_img = watermark_img.convert("RGBA")
             
             # ウォーターマークのサイズを調整
-            wm_width = int(image.width * scale)
-            wm_height = int(wm_width * watermark_img.height / watermark_img.width)
+            wm_width = int(img.size[0] * scale)
+            wm_height = int(wm_width * watermark_img.size[1] / watermark_img.size[0])
             watermark_img = watermark_img.resize((wm_width, wm_height))
             
             # 透明度を調整
@@ -128,17 +131,18 @@ class Watermarker:
             
             # ウォーターマークの位置を計算
             pos = self._calculate_position(
-                image.width, image.height,
+                img.size[0], img.size[1],
                 wm_width, wm_height,
                 position
             )
             
             # 新しい透明レイヤーを作成
-            layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-            layer.paste(watermark_img, pos)
+            layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            layer.paste(watermark_img, (int(pos[0]), int(pos[1])))
             
             # 画像とウォーターマークを合成
-            return Image.alpha_composite(image, layer)
+            result = Image.alpha_composite(img, layer)
+            return result
             
         except Exception as e:
             logger.error(f"イメージウォーターマーク追加エラー: {e}")
