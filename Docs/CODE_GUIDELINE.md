@@ -552,417 +552,253 @@ for stat in top_stats[:10]:
    - 大きなモデルを使用後に解放する: `del model; gc.collect()`
    - バッチ処理を活用する
 
-## テスト
+## テストガイドライン
 
-### 単体テスト
+### 1. テストの基本原則
 
-各モジュールの機能を個別にテストします：
+#### テストの種類と目的
 
-```python
-# test_file_manager.py
-import pytest
-from src.utils.file_manager import FileManager
-from PIL import Image
-import numpy as np
-import os
-from pathlib import Path
+1. **ユニットテスト**
+   - 単一の関数やクラスの動作を検証
+   - 外部依存はすべてモック化
+   - テストケースは独立して実行可能
 
-def create_mock_image():
-    """テスト用の画像を作成"""
-    return Image.fromarray(np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8))
+2. **統合テスト**
+   - 複数のコンポーネントの連携を検証
+   - 実際のコンポーネント間の相互作用をテスト
+   - 外部サービスは必要に応じてモック化
 
-def test_save_image():
-    # テスト用のモックオブジェクトとテンポラリディレクトリ
-    mock_image = create_mock_image()
-    temp_dir = "test_outputs"
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    # テスト対象のインスタンス
-    manager = FileManager(temp_dir)
-    
-    # 機能をテスト
-    filename = "test_image"
-    result = manager.save_image(mock_image, filename)
-    
-    # 結果を検証
-    assert result is not None
-    assert Path(result).exists()
-    assert Path(result).parent == Path(temp_dir)
-    
-    # クリーンアップ
-    os.remove(result)
-    os.rmdir(temp_dir)
+3. **E2Eテスト**
+   - ユーザーシナリオ全体を検証
+   - 実際のUIとバックエンドの統合
+   - 本番環境に近い状態でのテスト
 
-def test_save_with_metadata():
-    # メタデータ付きの保存をテスト
-    mock_image = create_mock_image()
-    temp_dir = "test_outputs"
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    manager = FileManager(temp_dir)
-    
-    metadata = {
-        "prompt": "test prompt",
-        "steps": 30,
-        "cfg_scale": 4.5
-    }
-    
-    result = manager.save_image_with_metadata(mock_image, "test", metadata)
-    
-    # メタデータファイルも作成されたことを確認
-    assert result is not None
-    metadata_path = os.path.splitext(result)[0] + ".json"
-    assert Path(metadata_path).exists()
-    
-    # クリーンアップ
-    os.remove(result)
-    os.remove(metadata_path)
-    os.rmdir(temp_dir)
-```
-
-### モック化
-
-外部依存をモック化してテストします：
+#### テストの命名規則
 
 ```python
-# test_sd3_inferencer.py
-import pytest
-from unittest.mock import MagicMock, patch
-from src.generator.sd3_inf import SD3Inferencer
+# 関数のテスト
+def test_function_name_scenario_expected_result():
+    pass
 
-# SD3モデルの依存をモック化してテスト
-@patch('src.generator.sd3_inf.SD3')
-@patch('src.generator.sd3_inf.VAE')
-def test_sd3_inferencer_init(mock_sd3_class, mock_vae_class):
-    # モックオブジェクトを設定
-    mock_sd3 = MagicMock()
-    mock_vae = MagicMock()
-    mock_sd3_class.return_value = mock_sd3
-    mock_vae_class.return_value = mock_vae
-    
-    # テスト対象の初期化
-    inferencer = SD3Inferencer("models/dummy_model.safetensors")
-    
-    # 初期化の検証
-    assert inferencer.model_loaded is False
-    mock_sd3_class.assert_not_called()  # 初期化時にはモデルはロードされない
-    
-    # モデルロード
-    inferencer.load("models/dummy_model.safetensors")
-    
-    # モデルがロードされたことを検証
-    mock_sd3_class.assert_called_once()
-    assert inferencer.model_loaded is True
-```
+# クラスのテスト
+class TestClassName:
+    def test_method_name_scenario_expected_result(self):
+        pass
 
-### 非同期コードのテスト
-
-非同期コードのテスト方法：
-
-```python
-# test_async_functions.py
-import pytest
-import asyncio
-from src.web.async_app import async_process
-
+# 非同期関数のテスト
 @pytest.mark.asyncio
-async def test_async_process():
-    # 非同期関数をテスト
-    result = await async_process("test input")
-    assert "test input" in result
-    assert "完了" in result
+async def test_async_function_name_scenario_expected_result():
+    pass
+```
 
+### 2. テストの実装ガイドライン
+
+#### Arrange-Act-Assert パターン
+
+```python
+def test_image_generation_success():
+    # Arrange
+    generator = ImageGenerator()
+    prompt = "test prompt"
+    expected_size = (512, 512)
+    
+    # Act
+    result = generator.generate(prompt)
+    
+    # Assert
+    assert result is not None
+    assert result.size == expected_size
+```
+
+#### フィクスチャの使用
+
+```python
+# conftest.py
+@pytest.fixture
+def sample_image():
+    """テスト用画像フィクスチャ"""
+    return Image.new('RGB', (512, 512))
+
+# test_file.py
+def test_image_processing(sample_image):
+    processor = ImageProcessor()
+    result = processor.process(sample_image)
+    assert result.size == (512, 512)
+```
+
+#### パラメータ化テスト
+
+```python
+@pytest.mark.parametrize("input_size,expected_size", [
+    ((512, 512), (512, 512)),
+    ((768, 768), (768, 768)),
+    ((1024, 1024), (1024, 1024))
+])
+def test_image_resize(input_size, expected_size):
+    image = create_test_image(input_size)
+    result = resize_image(image)
+    assert result.size == expected_size
+```
+
+### 3. 非同期テストのガイドライン
+
+#### 非同期関数のテスト
+
+```python
 @pytest.mark.asyncio
-async def test_process_cancellation():
-    # キャンセル機能のテスト
-    task = asyncio.create_task(async_process("test", steps=100))
+async def test_async_image_generation():
+    generator = AsyncImageGenerator()
     
-    # 少し待ってからキャンセル
-    await asyncio.sleep(0.1)
-    task.cancel()
-    
-    # キャンセルされたことを確認
-    with pytest.raises(asyncio.CancelledError):
-        await task
-```
-
-### Gradioインターフェースのテスト
-
-Gradioコンポーネントのテスト方法：
-
-```python
-# test_gradio_interface.py
-import pytest
-from src.web.app import create_interface
-
-def test_interface_creation():
-    # インターフェースの作成をテスト
-    interface = create_interface()
-    assert interface is not None
-
-def test_event_handler():
-    # イベントハンドラをテスト
-    from src.web.app import on_generate_click
-    
-    result_image, message = on_generate_click(
-        prompt="test prompt",
-        steps=10,
-        cfg_scale=4.5,
-        width=512,
-        height=512,
-        seed=42
-    )
-    
-    # エラーが発生していないことを確認（モックモードの場合）
-    assert "エラー" not in message
-```
-
-## デバッグ方法
-
-### ロギング
-
-効果的なデバッグのためのロギングの使用方法：
-
-```python
-import logging
-
-# モジュールごとのロガー設定
-logger = logging.getLogger(__name__)
-
-def complex_function(param):
-    """複雑な処理を行う関数"""
-    logger.debug(f"complex_function called with param={param}")
-    
-    try:
-        # 処理ステップごとにログを記録
-        logger.debug("Step 1: Initialization")
-        # 初期化処理
+    async with aiohttp.ClientSession() as session:
+        result = await generator.generate(
+            prompt="test",
+            session=session
+        )
         
-        logger.debug("Step 2: Processing")
-        # 処理
-        
-        logger.debug("Step 3: Finalization")
-        # 終了処理
-        
-        logger.info(f"Process completed successfully for {param}")
-        return result
-    except Exception as e:
-        logger.error(f"Error in complex_function: {e}", exc_info=True)
-        raise
+    assert result is not None
 ```
 
-### デバッグモード
-
-開発中のデバッグを容易にするための設定：
+#### 非同期モックの使用
 
 ```python
-# app.py
-import argparse
-
-def main():
-    parser = argparse.ArgumentParser(description="SD3.5 画像生成ウェブアプリケーション")
-    parser.add_argument("--debug", action="store_true", help="デバッグモードで実行")
-    args = parser.parse_args()
+@pytest.mark.asyncio
+async def test_async_api_call(mocker):
+    mock_response = mocker.AsyncMock()
+    mock_response.json.return_value = {"status": "success"}
     
-    # デバッグモードの設定
-    if args.debug:
-        logging.basicConfig(level=logging.DEBUG)
-        # 追加のデバッグ機能を有効化
-    else:
-        logging.basicConfig(level=logging.INFO)
+    mock_session = mocker.AsyncMock()
+    mock_session.get.return_value = mock_response
     
-    # アプリの起動
-    app = create_interface()
-    app.launch(debug=args.debug)
-
-if __name__ == "__main__":
-    main()
+    result = await api_call(session=mock_session)
+    assert result["status"] == "success"
 ```
 
-## パフォーマンスチューニング
+### 4. エラーケースのテスト
 
-### モデル最適化
+#### 例外のテスト
 
-モデルのパフォーマンスを最適化するための方法：
-
-1. **精度の調整**:
 ```python
-# FP16精度での実行
-model = model.half()  # FP16精度に変換
+def test_invalid_prompt_raises_error():
+    generator = ImageGenerator()
+    
+    with pytest.raises(ValueError) as exc_info:
+        generator.generate("")
+    
+    assert "Empty prompt" in str(exc_info.value)
 ```
 
-2. **メモリ使用量の最適化**:
+#### エラー状態の検証
+
 ```python
-# 不要なメモリを解放
-import gc
-import torch
-
-def run_with_optimized_memory(func, *args, **kwargs):
-    # キャッシュをクリア
-    torch.cuda.empty_cache()
+@pytest.mark.asyncio
+async def test_generation_error_handling():
+    generator = AsyncImageGenerator()
     
-    # ガベージコレクションを実行
-    gc.collect()
+    with pytest.raises(GenerationError) as exc_info:
+        await generator.generate("invalid prompt")
     
-    # 関数を実行
-    result = func(*args, **kwargs)
-    
-    # 再度メモリを解放
-    torch.cuda.empty_cache()
-    gc.collect()
-    
-    return result
+    assert exc_info.value.error_code == "INVALID_PROMPT"
+    assert exc_info.value.has_retry_option
 ```
 
-3. **バッチ処理の最適化**:
+### 5. テストカバレッジ
+
+#### カバレッジ目標
+
+- ユニットテスト: 90%以上
+- 統合テスト: 70%以上
+- E2Eテスト: 主要フロー網羅
+
+#### カバレッジレポートの生成
+
+```bash
+# HTMLレポート生成
+poetry run pytest --cov=src --cov-report=html
+
+# コンソールサマリー
+poetry run pytest --cov=src --cov-report=term-missing
+```
+
+### 6. テストの実行環境
+
+#### 環境変数の設定
+
 ```python
-def process_in_batches(items, batch_size=4):
-    """項目をバッチで処理する"""
-    results = []
-    for i in range(0, len(items), batch_size):
-        batch = items[i:i+batch_size]
-        # バッチを処理
-        batch_results = process_batch(batch)
-        results.extend(batch_results)
-    return results
+# test_settings.py
+@pytest.fixture(autouse=True)
+def test_env():
+    original_env = dict(os.environ)
+    os.environ.update({
+        "TEST_MODE": "true",
+        "MODEL_PATH": "test_models/",
+        "CUDA_VISIBLE_DEVICES": ""
+    })
+    yield
+    os.environ.clear()
+    os.environ.update(original_env)
 ```
 
-## 共通のアンチパターンと修正方法
+#### テストデータの管理
 
-### グローバル状態への依存
-
-**問題**: グローバル変数の使用はテストを難しくし、並行処理時に問題を引き起こします。
-
-**悪い例**:
 ```python
-# グローバル変数
-loaded_model = None
-
-def load_model(model_path):
-    global loaded_model
-    loaded_model = SD3(model_path)
-    return "モデルをロードしました"
-
-def generate_image(prompt):
-    if loaded_model is None:
-        return None, "モデルがロードされていません"
-    return loaded_model.generate(prompt), "生成完了"
+# conftest.py
+@pytest.fixture(scope="session")
+def test_data_dir(tmp_path_factory):
+    data_dir = tmp_path_factory.mktemp("test_data")
+    # テストデータのセットアップ
+    return data_dir
 ```
 
-**良い例**:
-```python
-class ModelManager:
-    def __init__(self):
-        self.loaded_model = None
-    
-    def load_model(self, model_path):
-        self.loaded_model = SD3(model_path)
-        return "モデルをロードしました"
-    
-    def generate_image(self, prompt):
-        if self.loaded_model is None:
-            return None, "モデルがロードされていません"
-        return self.loaded_model.generate(prompt), "生成完了"
+### 7. CI/CDでのテスト実行
 
-# Gradioと統合
-with gr.Blocks() as demo:
-    manager = gr.State(ModelManager())
-    # ...
+#### GitHub Actionsの設定
+
+```yaml
+name: Tests
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install poetry
+          poetry install
+      
+      - name: Run tests
+        run: |
+          poetry run pytest --cov=src
+          poetry run pytest tests/web/e2e/
 ```
 
-### 例外の無視
+### 8. テストのベストプラクティス
 
-**問題**: エラーを捕捉して無視すると、デバッグが難しくなります。
+1. **テストの独立性**
+   - 各テストは他のテストに依存しない
+   - テストの実行順序は結果に影響しない
+   - 共有リソースは適切にクリーンアップ
 
-**悪い例**:
-```python
-def load_model(model_path):
-    try:
-        model = SD3(model_path)
-        return model
-    except:
-        # エラーを無視して続行
-        return None
-```
+2. **テストの可読性**
+   - テスト名は目的を明確に示す
+   - 各テストは単一の機能をテスト
+   - テストデータの意図を明確にする
 
-**良い例**:
-```python
-def load_model(model_path):
-    try:
-        model = SD3(model_path)
-        return model
-    except FileNotFoundError as e:
-        logger.error(f"モデルファイルが見つかりません: {e}")
-        raise ModelLoadError(f"モデルファイル '{model_path}' が見つかりません") from e
-    except Exception as e:
-        logger.error(f"モデル読み込みエラー: {e}")
-        raise ModelLoadError(f"モデル '{model_path}' の読み込み中にエラーが発生しました: {str(e)}") from e
-```
+3. **テストの保守性**
+   - DRYよりも明確さを優先
+   - フィクスチャを適切に使用
+   - テストコードもレビュー対象
 
-### 長すぎる関数やメソッド
-
-**問題**: 長い関数は理解、テスト、保守が難しくなります。
-
-**悪い例**:
-```python
-def generate_and_process_image(prompt, steps, cfg_scale, width, height, seed, 
-                              upscale=False, add_watermark=False, custom_save=False):
-    # 画像生成
-    # ... 50行のコード ...
-    
-    # アップスケール処理
-    # ... 30行のコード ...
-    
-    # ウォーターマーク追加
-    # ... 25行のコード ...
-    
-    # カスタム保存
-    # ... 40行のコード ...
-    
-    return final_image, "処理完了"
-```
-
-**良い例**:
-```python
-def generate_and_process_image(prompt, steps, cfg_scale, width, height, seed, 
-                              upscale=False, add_watermark=False, custom_save=False):
-    # 画像生成
-    image, status = generate_image(prompt, steps, cfg_scale, width, height, seed)
-    if image is None:
-        return None, status
-    
-    # 後処理
-    if upscale:
-        image = apply_upscale(image)
-    
-    if add_watermark:
-        image = add_watermark_to_image(image)
-    
-    # 保存
-    if custom_save:
-        save_path = save_with_custom_options(image, prompt)
-    else:
-        save_path = save_default(image, prompt)
-    
-    return image, f"処理完了: {save_path}"
-
-# 分割された関数
-def generate_image(prompt, steps, cfg_scale, width, height, seed):
-    # 画像生成のみを担当
-    ...
-
-def apply_upscale(image):
-    # アップスケール処理のみを担当
-    ...
-
-def add_watermark_to_image(image):
-    # ウォーターマーク追加のみを担当
-    ...
-
-def save_with_custom_options(image, prompt):
-    # カスタム保存のみを担当
-    ...
-```
+4. **テストのパフォーマンス**
+   - 重いテストは分離して実行
+   - 不要なI/Oは避ける
+   - 適切なスコープのフィクスチャを使用
 
 ## まとめ
 

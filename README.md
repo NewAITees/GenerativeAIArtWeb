@@ -44,12 +44,74 @@ cd GenerativeAIArtWeb
 # Poetryがインストールされていない場合
 curl -sSL https://install.python-poetry.org | python3 -
 
+# 仮想環境の作成とPythonバージョンの設定
+pyenv install 3.11.7
+pyenv local 3.11.7
+poetry env use $(pyenv which python)
+
 # 依存パッケージのインストール
 poetry install
 
 # オプション: CUDA サポートを有効にする場合
 poetry install -E cuda
 ```
+
+### 依存パッケージのバージョン
+
+主要な依存パッケージとそのバージョン：
+
+- Python: 3.11.7以上
+- PyTorch: 2.6.0
+- torchvision: 0.21.0
+- Gradio: 4.31.0
+- Pydantic: 2.5.2
+- Ollama: 0.1.5
+
+### 開発環境の設定
+
+1. **開発ツールのインストール**
+```bash
+# 開発用依存パッケージのインストール
+poetry install --with dev
+
+# pre-commit フックのインストール
+poetry run pre-commit install
+```
+
+2. **環境変数の設定**
+```bash
+# .env ファイルの作成
+cp .env.example .env
+
+# 必要な環境変数を設定
+nano .env
+```
+
+3. **型チェックの実行**
+```bash
+# mypyによる型チェック
+poetry run mypy src
+
+# vulture による未使用コード検出
+poetry run vulture src
+```
+
+### トラブルシューティング
+
+1. **CUDA関連の問題**
+   - CUDA対応のGPUドライバーがインストールされていることを確認
+   - `nvidia-smi` コマンドでGPUの状態を確認
+   - VRAM使用量を監視
+
+2. **メモリ不足エラー**
+   - バッチサイズを小さくする
+   - 画像サイズを調整
+   - 不要なプロセスを終了
+
+3. **モデル読み込みエラー**
+   - モデルファイルの整合性を確認
+   - ディスク容量を確認
+   - 必要に応じてモデルを再ダウンロード
 
 ## モデルファイルの準備
 
@@ -123,3 +185,53 @@ poetry run python src/web/demo.py
 - Stability AI - SD3.5モデルの開発
 - Google - T5モデルの開発
 - OpenAI - CLIPモデルの開発
+
+## テスト
+
+### テストの実行
+
+```bash
+# 全テストの実行
+poetry run pytest
+
+# カバレッジレポート付きで実行
+poetry run pytest --cov=src --cov-report=html
+
+# 特定のテストの実行
+poetry run pytest tests/generator/unit/
+
+# 非同期テストの実行
+poetry run pytest tests/web/integration/
+
+# E2Eテストの実行
+poetry run pytest tests/web/e2e/
+```
+
+### テストの種類
+
+1. **ユニットテスト** (`tests/*/unit/`)
+   - 個々のコンポーネントの独立したテスト
+   - 外部依存はモックを使用
+
+2. **統合テスト** (`tests/*/integration/`)
+   - 複数のコンポーネントの連携テスト
+   - 実際のコンポーネント間の相互作用を検証
+
+3. **E2Eテスト** (`tests/web/e2e/`)
+   - エンドツーエンドのユーザーシナリオテスト
+   - 実際のUIとバックエンドの統合テスト
+
+### テスト環境の準備
+
+```bash
+# テスト用の依存パッケージをインストール
+poetry install --with dev
+
+# テスト用の環境変数を設定
+cp .env.test.example .env.test
+```
+
+詳細なテストのガイドラインとアーキテクチャについては、以下のドキュメントを参照してください：
+
+- [テストアーキテクチャ](docs/ARCHITECTURE.md#テストアーキテクチャ)
+- [テストガイドライン](docs/CODE_GUIDELINE.md#テストガイドライン)

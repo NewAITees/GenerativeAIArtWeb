@@ -100,6 +100,7 @@ sequenceDiagram
     participant UI as Gradio UI
     participant Generator as SD3 Generator
     participant Callback as ProgressCallback
+    participant ErrorHandler as エラーハンドラ
     
     User->>UI: プロンプト入力 & 画像生成開始
     
@@ -108,20 +109,35 @@ sequenceDiagram
     activate Generator
     Generator-->>UI: タスク開始通知
     
-    loop サンプリングステップ
-        Generator->>Callback: 進捗更新(step/total_steps)
-        Callback-->>UI: 進捗バー & ステータス更新
+    par 生成プロセス
+        loop サンプリングステップ
+            Generator->>Callback: 進捗更新(step/total_steps)
+            Callback-->>UI: 進捗バー & ステータス更新
+            
+            alt キャンセル要求
+                User->>UI: キャンセルボタンクリック
+                UI->>Generator: キャンセルシグナル送信
+                Generator-->>UI: 処理中断 & リソース解放
+                UI-->>User: キャンセル完了通知
+            end
+        end
+    and エラー監視
+        Generator->>ErrorHandler: エラー発生検知
+        ErrorHandler-->>UI: エラー情報表示
+        UI-->>User: エラー通知
     end
     
-    Note over Generator: プレビュー画像の生成
-    Generator->>Callback: 中間プレビュー画像
-    Callback-->>UI: プレビュー表示更新
+    alt 正常完了
+        Note over Generator: プレビュー画像の生成
+        Generator->>Callback: 中間プレビュー画像
+        Callback-->>UI: プレビュー表示更新
+        
+        Generator->>Generator: 最終画像の生成
+        Generator-->>UI: 生成完了 & 最終画像
+        UI-->>User: 生成結果表示
+    end
     
-    Generator->>Generator: 最終画像の生成
-    Generator-->>UI: 生成完了 & 最終画像
     deactivate Generator
-    
-    UI-->>User: 生成結果表示
 ```
 
 ## 実装の詳細
@@ -201,3 +217,173 @@ graph TD
 3. **ユーザーエクスペリエンスの重視**: 進捗表示やキャンセル機能でUXを向上
 4. **エラーハンドリング**: 非同期処理特有のエラーに対する適切な処理
 5. **拡張性**: 将来的な機能追加に対応できる柔軟な設計
+
+## テストアーキテクチャ
+
+### テストの構成
+
+```mermaid
+graph TD
+    Root[tests/] --> Conftest[conftest.py]
+    Root --> Init[__init__.py]
+    Root --> Generator[generator/]
+    Root --> Web[web/]
+    Root --> Prompt[prompt/]
+    Root --> Utils[utils/]
+    
+    Generator --> GenUnit[unit/]
+    Generator --> GenInt[integration/]
+    Generator --> GenFixtures[fixtures.py]
+    Generator --> GenConftest[conftest.py]
+    
+    Web --> WebUnit[unit/]
+    Web --> WebInt[integration/]
+    Web --> WebE2E[e2e/]
+    Web --> WebFixtures[fixtures.py]
+    
+    Prompt --> PromptUnit[unit/]
+    Prompt --> PromptInt[integration/]
+    Prompt --> PromptFixtures[fixtures.py]
+    
+    Utils --> UtilsUnit[unit/]
+    Utils --> UtilsInt[integration/]
+    Utils --> UtilsFixtures[fixtures.py]
+    
+    classDef testFiles fill:#f9f,stroke:#333,stroke-width:1px;
+    classDef testDirs fill:#bbf,stroke:#333,stroke-width:1px;
+    classDef fixtures fill:#bfb,stroke:#333,stroke-width:1px;
+    
+    class Conftest,Init,GenConftest testFiles;
+    class Generator,Web,Prompt,Utils,GenUnit,GenInt,WebUnit,WebInt,WebE2E,PromptUnit,PromptInt,UtilsUnit,UtilsInt testDirs;
+    class GenFixtures,WebFixtures,PromptFixtures,UtilsFixtures fixtures;
+```
+
+### テストレベル
+
+1. **ユニットテスト (`unit/`)**
+   - 個々のコンポーネントの独立したテスト
+   - モックを使用して外部依存を分離
+   - 高速な実行と即座のフィードバック
+
+2. **統合テスト (`integration/`)**
+   - 複数のコンポーネントの連携テスト
+   - 実際のコンポーネント間の相互作用を検証
+   - 部分的なモックの使用
+
+3. **E2Eテスト (`e2e/`)**
+   - エンドツーエンドのユーザーシナリオテスト
+   - 実際のUIとバックエンドの統合テスト
+   - モックを最小限に抑えた実環境に近いテスト
+
+### テストフィクスチャ
+
+各モジュールの`fixtures.py`には、以下のような共通フィクスチャを定義：
+
+```python
+# 例: generator/fixtures.py
+@pytest.fixture
+def mock_model():
+    """モデルのモックフィクスチャ"""
+    return Mock(spec=SD3Model)
+
+@pytest.fixture
+def sample_prompt():
+    """サンプルプロンプトフィクスチャ"""
+    return {
+        "text": "test prompt",
+        "params": {"steps": 20, "cfg_scale": 7.0}
+    }
+```
+
+### 非同期テスト
+
+非同期コンポーネントのテストには`pytest-asyncio`を使用：
+
+```python
+@pytest.mark.asyncio
+async def test_async_generation():
+    """非同期画像生成のテスト"""
+    generator = AsyncImageGenerator()
+    result = await generator.generate(prompt="test")
+    assert result is not None
+```
+
+### テストカバレッジ
+
+テストカバレッジの目標と測定：
+
+```mermaid
+pie title テストカバレッジ目標
+    "ユニットテスト" : 90
+    "統合テスト" : 70
+    "E2Eテスト" : 50
+```
+
+### CI/CDパイプラインでのテスト実行
+
+```mermaid
+graph TD
+    A[コードプッシュ] --> B[静的解析]
+    B --> C[ユニットテスト]
+    C --> D[統合テスト]
+    D --> E{カバレッジ確認}
+    E -->|基準満たす| F[E2Eテスト]
+    E -->|基準未満| G[レビュー要求]
+    F -->|成功| H[デプロイ]
+    F -->|失敗| G
+```
+
+### テスト実行コマンド
+
+```bash
+# 全テストの実行
+poetry run pytest
+
+# カバレッジレポート付きで実行
+poetry run pytest --cov=src --cov-report=html
+
+# 特定のテストの実行
+poetry run pytest tests/generator/unit/
+
+# 非同期テストの実行
+poetry run pytest tests/web/integration/
+
+# E2Eテストの実行
+poetry run pytest tests/web/e2e/
+```
+
+### モックとスタブ
+
+主要なモックオブジェクト：
+
+```python
+# モデルモック
+@pytest.fixture
+def mock_sd3_model():
+    model = Mock()
+    model.generate.return_value = create_dummy_image()
+    return model
+
+# 非同期モック
+@pytest.fixture
+async def mock_async_generator():
+    generator = AsyncMock()
+    generator.generate.return_value = create_dummy_image()
+    return generator
+```
+
+### テスト環境設定
+
+テスト用の環境変数とコンフィグ：
+
+```python
+# conftest.py
+@pytest.fixture(autouse=True)
+def env_setup():
+    """テスト環境のセットアップ"""
+    os.environ["TEST_MODE"] = "true"
+    os.environ["MODEL_PATH"] = "test_models/"
+    yield
+    os.environ.pop("TEST_MODE")
+    os.environ.pop("MODEL_PATH")
+```
